@@ -8,7 +8,7 @@
   ```
   git clone https://github.com/axkusakin/crop_seed_instance_segmentation.git
   ```
-**2. Clone the [Mask-RCNN]([url](https://github.com/ahmedfgad/Mask-RCNN-TF2)) Repository (TensorFlow 2.0)**
+**2. Clone the [Mask-RCNN](https://github.com/ahmedfgad/Mask-RCNN-TF2) Repository (TensorFlow 2.0)**
   ```
   git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
   ```
