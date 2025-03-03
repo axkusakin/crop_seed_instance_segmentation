@@ -1,3 +1,16 @@
+# My additions to this repository
+Updated the installation process, added new program versions and
+code to calculate seed morphological parameters.
+
+# How-to
+1. Clone this repository:
+```
+git clone https://github.com/axkusakin/crop_seed_instance_segmentation.git
+```
+
+
+
+
 # Learning from Synthetic Dataset for Crop Seed Instance Segmentation
 
 ![image-20191204160204190](README.assets/image-20191204160204190.png)
