@@ -30,7 +30,7 @@
   ```
 
 
-# Learning from Synthetic Dataset for Crop Seed Instance Segmentation
+# (REDAME from the original repository) Learning from Synthetic Dataset for Crop Seed Instance Segmentation
 
 ![image-20191204160204190](README.assets/image-20191204160204190.png)
 
