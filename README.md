@@ -1,14 +1,33 @@
-# My additions to this repository
-Updated the installation process, added new program versions and
-code to calculate seed morphological parameters.
+# What's New in This Repository
+* Updated the installation process.
+* Added support for new program versions.
+* Included code for calculating seed morphological parameters.
 
-# How-to
-1. Clone this repository:
-```
-git clone https://github.com/axkusakin/crop_seed_instance_segmentation.git
-```
-
-
+## How-to
+**1. Clone the repository:**
+  ```
+  git clone https://github.com/axkusakin/crop_seed_instance_segmentation.git
+  ```
+**2. Clone the Mask-RCNN Repository (TensorFlow 2.0)**
+  ```
+  git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
+  ```
+**3. Set Up the Environment**
+  Create a new Conda environment and activate it:
+  ```
+  mamba create -n <env_name> python=3.7.11
+  conda activate <env_name>
+  ```
+**4. Install Dependencies**
+  Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
+  ```
+  mv requirements.txt Mask-RCNN-TF2/
+  cd Mask-RCNN-TF2
+  ```
+  Then install the dependencies:
+  ```
+  pip install -r requirements.txt
+  ```
 
 
 # Learning from Synthetic Dataset for Crop Seed Instance Segmentation
