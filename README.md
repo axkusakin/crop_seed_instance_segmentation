@@ -16,7 +16,7 @@
 **3. Set Up the Environment**
   Create a new Conda environment and activate it:
   ```
-  mamba create -n <env_name> python=3.7.11
+  mamba create -n <env_name> python=3.7.11 --no-channel-priority
   conda activate <env_name>
   ```
 **4. Install Dependencies**
