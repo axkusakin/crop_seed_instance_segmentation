@@ -22,7 +22,7 @@
 **4. Install Dependencies**
   Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
   ```
-  mv requirements.txt Mask-RCNN-TF2/
+  cp requirements.txt Mask-RCNN-TF2/
   cd Mask-RCNN-TF2
   ```
   Then install the dependencies:
