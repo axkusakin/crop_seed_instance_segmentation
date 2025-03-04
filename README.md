@@ -13,23 +13,28 @@
   git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
   ```
 **3. Set Up the Environment**
-  Create a new Conda environment and activate it:
+
+Create a new Conda environment and activate it:
   ```
   mamba create -n <env_name> python=3.7.11 --no-channel-priority
   conda activate <env_name>
   ```
 **4. Install Dependencies**
-  Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
+
+Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
   ```
   cp crop_seed_instance_segmentation/requirements.txt Mask-RCNN-TF2/
   cd Mask-RCNN-TF2
   ```
-  Then install the dependencies:
+
+Then install the dependencies:
   ```
   pip install -r requirements.txt
   python setup.py install
   ```
 **5. Install data with Trained Model Weights:**
+
+
 https://drive.google.com/file/d/1g8bg9ter9DlKWgs0lfPZMQemRlzRVOQr/view?usp=sharing
 
 
