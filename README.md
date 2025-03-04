@@ -32,7 +32,7 @@ Then install the dependencies:
   pip install -r requirements.txt
   python setup.py install
   ```
-**5. Install data with Trained Model Weights:**
+**5. Install data with Trained Model Weights (~889MB):**
 
 
 https://drive.google.com/file/d/1g8bg9ter9DlKWgs0lfPZMQemRlzRVOQr/view?usp=sharing
