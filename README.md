@@ -27,6 +27,7 @@
   Then install the dependencies:
   ```
   pip install -r requirements.txt
+  python setup.py install
   ```
 
 
