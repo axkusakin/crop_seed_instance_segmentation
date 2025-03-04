@@ -10,6 +10,7 @@
   ```
 **2. Clone the [Mask-RCNN](https://github.com/ahmedfgad/Mask-RCNN-TF2) Repository (TensorFlow 2.0)**
   ```
+  cd crop_seed_instance_segmentation
   git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
   ```
 **3. Set Up the Environment**
