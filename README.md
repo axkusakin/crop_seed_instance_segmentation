@@ -10,7 +10,6 @@
   ```
 **2. Clone the [Mask-RCNN](https://github.com/ahmedfgad/Mask-RCNN-TF2) Repository (TensorFlow 2.0)**
   ```
-  cd crop_seed_instance_segmentation
   git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
   ```
 **3. Set Up the Environment**
@@ -22,7 +21,7 @@
 **4. Install Dependencies**
   Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
   ```
-  cp requirements.txt Mask-RCNN-TF2/
+  cp crop_seed_instance_segmentation/requirements.txt Mask-RCNN-TF2/
   cd Mask-RCNN-TF2
   ```
   Then install the dependencies:
