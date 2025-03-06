@@ -15,9 +15,14 @@ import argparse
 import gdown
 
 def download_and_extract_data(force=False, output_dir="data"):
-    # Define paths
-    data_dir = os.path.join(os.getcwd(), output_dir)  # Path to the custom output directory
-    zip_file = "data.zip"
+    # Path to the current directory
+    current_dir = os.getcwd()
+
+    # Path to the ZIP file
+    zip_file = os.path.join(current_dir, "data.zip")
+
+    # Path to the output directory (default is "data" or custom name)
+    data_dir = os.path.join(current_dir, output_dir)
 
     # Google Drive file URL
     download_url = "https://drive.google.com/uc?export=download&id=1g8bg9ter9DlKWgs0lfPZMQemRlzRVOQr"
@@ -31,36 +36,41 @@ def download_and_extract_data(force=False, output_dir="data"):
             print(f"Directory '{data_dir}' already exists. Overwriting...")
             shutil.rmtree(data_dir)  # Remove the existing directory
 
-    # Step 2: Download the ZIP file using gdown if it does not exist
+    # Step 2: Download the ZIP file if it doesn't exist
     if not os.path.exists(zip_file):
         print("Downloading data.zip...")
         gdown.download(download_url, zip_file, quiet=False)
         print("Download complete!")
 
-    # Step 3: Extract the ZIP file directly into the renamed directory
+    # Step 3: Extract the ZIP file into the current directory
     if os.path.exists(zip_file):
         print(f"Extracting data.zip to '{data_dir}'...")
         try:
-            os.makedirs(data_dir, exist_ok=True)  # Create the output directory if it doesn't exist
             with zipfile.ZipFile(zip_file, "r") as zip_ref:
-                zip_ref.extractall(data_dir)  # Extract directly into the custom directory
-            print(f"Extraction complete! Files are stored in '{data_dir}'.")
+                zip_ref.extractall(current_dir)  # Extract to the current directory
+            print(f"Extraction complete! Files are stored in '{current_dir}'.")
         except zipfile.BadZipFile:
             print(f"Error: {zip_file} is not a valid ZIP file.")
 
-    # Step 4: Remove the __MACOSX directory if it exists
-    macosx_dir = os.path.join(data_dir, "__MACOSX")
+    # Step 4: Rename the "data" folder (if a custom name is provided)
+    default_data_dir = os.path.join(current_dir, "data")  # Path to the default "data" folder
+    if os.path.exists(default_data_dir) and output_dir != "data":
+        os.rename(default_data_dir, data_dir)  # Rename the folder
+        print(f"Renamed 'data' directory to '{output_dir}'.")
+
+    # Step 5: Remove the __MACOSX directory if it exists
+    macosx_dir = os.path.join(current_dir, "__MACOSX")
     if os.path.exists(macosx_dir):
         shutil.rmtree(macosx_dir)
 
-    # Step 5: Remove files with names like 'Icon'$'\r'
-    for root, dirs, files in os.walk(data_dir, topdown=False):
+    # Step 6: Remove files with names like 'Icon'$'\r'
+    for root, dirs, files in os.walk(current_dir, topdown=False):
         for file_name in files:
             if "\r" in file_name or file_name.startswith("Icon"):
                 file_path = os.path.join(root, file_name)
                 os.remove(file_path)  # Remove unwanted files
 
-    # Step 6: Delete the ZIP file after extraction
+    # Step 7: Delete the ZIP file after extraction
     if os.path.exists(zip_file):
         os.remove(zip_file)
         print(f"Deleted the ZIP file: {zip_file}")
@@ -68,18 +78,18 @@ def download_and_extract_data(force=False, output_dir="data"):
     print("Process complete!")
 
 if __name__ == "__main__":
-    # Set up argument parsing
+    # Set up command-line argument parsing
     parser = argparse.ArgumentParser(description="Download and extract data.zip from Google Drive.")
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing output directory if it exists."
+        help="Overwrite the existing directory if it exists."
     )
     parser.add_argument(
         "--output-dir",
         "-o",
         default="data",
-        help="Custom name for the output directory (default: 'data')."
+        help="Custom name for the 'data' folder (default: 'data')."
     )
     args = parser.parse_args()
 
