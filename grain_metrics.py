@@ -133,11 +133,17 @@ def process_images(input_dir, output_file, model):
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Analyze barley seeds in images using Mask R-CNN')
-    parser.add_argument('--input', required=True, help='Path to directory containing images to analyze')
-    parser.add_argument('--output', required=True, help='Path to output file')
-    parser.add_argument('--weights', default='data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5', 
+    parser.add_argument("-i", '--input', required=True, help='Path to directory containing images to analyze')
+    parser.add_argument("-o", '--output', required=True, help='Path to output file')
+    parser.add_argument("-w", '--weights', default='data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5', 
                         help='Path to Mask R-CNN weights file')
+    parser.add_argument("-c", "--num_cpus", type=int, default=4, help="Number of CPUs to use")
     args = parser.parse_args()
+
+    # Set the number of CPUs
+    os.environ["OMP_NUM_THREADS"] = str(args.num_cpus)
+    os.environ["TF_NUM_INTEROP_THREADS"] = str(args.num_cpus)
+    os.environ["TF_NUM_INTRAOP_THREADS"] = str(args.num_cpus)
     
     # Check if input directory exists
     if not os.path.isdir(args.input):
