@@ -162,9 +162,6 @@ def main():
         print(f"Error: Weights file {args.weights} does not exist")
         sys.exit(1)
     
-    # Create output directory if it doesn't exist
-    os.makedirs(args.output, exist_ok=True)
-    
     # Create model
     model = modellib.MaskRCNN(mode="inference", config=CONFIG, model_dir="")
     
