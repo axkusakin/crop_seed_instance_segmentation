@@ -118,27 +118,18 @@ def process_image(image_path, model):
     
     return final_df
 
-def process_images(input_dir, output_file, model, num_jobs):
+def process_images(input_dir, output_file, model):
     """Process all images, filter results, and save to a single table."""
     output_dir = os.path.dirname(output_file)
 
-    # Collect all valid image paths
-    image_paths = [
-        os.path.join(input_dir, file)
-        for file in sorted(os.listdir(input_dir))
-        if file.lower().endswith(('.png', '.jpg', '.jpeg'))
-    ]
-
-    # Use multiprocessing to process images in parallel
-    num_workers = min(len(image_paths), num_jobs)  # Limit workers to the number of jobs
-    with Pool(processes=num_workers) as pool:
-        results = pool.starmap(process_image, [(path, model) for path in image_paths])
-
-    # Combine results from all workers
-    df_list = [df for df in results if not df.empty]
+    df_list = []
+    for file in sorted(os.listdir(input_dir)):
+        if file.endswith(('.png', '.jpg', '.jpeg')):
+            df = process_image(os.path.join(input_dir, file), model)
+            if not df.empty:
+                df_list.append(df)
+    
     final_df = pd.concat(df_list, ignore_index=True)
-
-    # Save results
     final_df.to_csv(output_file, sep='\t', index=False)
     print(f"Results saved to {output_file}")
 
@@ -151,8 +142,6 @@ def main():
                         help='Path to Mask R-CNN weights file')
     parser.add_argument("-c", "--num_cpus", type=int, default=4, 
                         help="Number of CPUs to use for TensorFlow/OpenMP threading (default: 4)")
-    parser.add_argument("-t", "--num_jobs", type=int, default=1, 
-                        help="Number of concurrent jobs for parallel image processing (default: 1)")
     args = parser.parse_args()
 
     # Set the number of CPUs
