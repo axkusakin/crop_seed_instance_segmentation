@@ -174,7 +174,7 @@ def main():
     model.load_weights(args.weights, by_name=True)
     
     # Process images
-    process_images(args.input, args.output, model, args.num_jobs)
+    process_images(args.input, args.output, model)
 
 if __name__ == "__main__":
     main()
