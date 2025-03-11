@@ -17,6 +17,7 @@ import argparse
 from skimage.measure import regionprops
 from skimage.measure import find_contours
 from math import sqrt, pi
+from multiprocessing import Pool, cpu_count
 
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -112,21 +113,32 @@ def process_image(image_path, model):
     columns = ["file_name", "object_id", "detection_score", "AS_seed_area", "L_seed_length",
                "W_seed_width", "LWR_length_to_width_ratio", "eccentricity", "solidity",
                "PL_perimeter_length", "CS_seed_circularity"]
-    return pd.DataFrame(data, columns=columns)
+    final_df = pd.DataFrame(data, columns=columns)
+    final_df = filter_by_iqr_1(final_df).reset_index(drop=True)  # Apply IQR filtering
+    
+    return final_df
 
 def process_images(input_dir, output_file, model):
     """Process all images, filter results, and save to a single table."""
     output_dir = os.path.dirname(output_file)
-    
-    df_list = []
-    for file in sorted(os.listdir(input_dir)):
-        if file.endswith(('.png', '.jpg', '.jpeg')):
-            df = process_image(os.path.join(input_dir, file), model)
-            if not df.empty:
-                df = filter_by_iqr_1(df).reset_index(drop=True)  # Apply first-level filtering
-                df_list.append(df)
-    
+
+    # Collect all valid image paths
+    image_paths = [
+        os.path.join(input_dir, file)
+        for file in sorted(os.listdir(input_dir))
+        if file.lower().endswith(('.png', '.jpg', '.jpeg'))
+    ]
+
+    # Use multiprocessing to process images in parallel
+    num_workers = min(len(image_paths), num_jobs)  # Limit workers to the number of jobs
+    with Pool(processes=num_workers) as pool:
+        results = pool.starmap(process_image, [(path, model) for path in image_paths])
+
+    # Combine results from all workers
+    df_list = [df for df in results if not df.empty]
     final_df = pd.concat(df_list, ignore_index=True)
+
+    # Save results
     final_df.to_csv(output_file, sep='\t', index=False)
     print(f"Results saved to {output_file}")
 
@@ -137,7 +149,10 @@ def main():
     parser.add_argument("-o", '--output', required=True, help='Path to output file')
     parser.add_argument("-w", '--weights', default='data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5', 
                         help='Path to Mask R-CNN weights file')
-    parser.add_argument("-c", "--num_cpus", type=int, default=4, help="Number of CPUs to use")
+    parser.add_argument("-c", "--num_cpus", type=int, default=4, 
+                        help="Number of CPUs to use for TensorFlow/OpenMP threading (default: 4)")
+    parser.add_argument("-t", "--num_jobs", type=int, default=1, 
+                        help="Number of concurrent jobs for parallel image processing (default: 1)")
     args = parser.parse_args()
 
     # Set the number of CPUs
@@ -170,7 +185,7 @@ def main():
     model.load_weights(args.weights, by_name=True)
     
     # Process images
-    process_images(args.input, args.output, model)
+    process_images(args.input, args.output, model, args.num_jobs)
 
 if __name__ == "__main__":
     main()
