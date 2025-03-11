@@ -118,7 +118,7 @@ def process_image(image_path, model):
     
     return final_df
 
-def process_images(input_dir, output_file, model):
+def process_images(input_dir, output_file, model, num_jobs):
     """Process all images, filter results, and save to a single table."""
     output_dir = os.path.dirname(output_file)
 
