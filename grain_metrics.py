@@ -49,16 +49,16 @@ CONFIG = InferenceConfig()
 CLASS_NAMES = ['BG', 'SEED']
 
 # Filtering functions using IQR
-def filter_by_quantiles(df):
-    """Remove outliers based on 12.5% (lower) and 87.5% (upper) quantiles."""
-    quantile_low = 0.125  # Lower threshold (12.5%)
-    quantile_high = 0.875  # Upper threshold (87.5%)
-
-    for column in df.columns[3:]:  # Skipping first 3 columns (file_name, object_id, detection_score)
-        lower_limit = df[column].quantile(quantile_low)
-        upper_limit = df[column].quantile(quantile_high)
+def filter_by_iqr(df):
+    """Remove outliers using the standard IQR method (without additional factors)."""
+    for column in df.columns[3:]:  # Skip first 3 columns (file_name, object_id, detection_score)
+        Q1 = df[column].quantile(0.25)
+        Q3 = df[column].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_limit = Q1 - IQR
+        upper_limit = Q3 + IQR
         df = df[(df[column] >= lower_limit) & (df[column] <= upper_limit)]
-
+    
     return df.reset_index(drop=True)
 
 # Image Processing & Feature Extraction
@@ -106,7 +106,7 @@ def process_image(image_path, model):
                "W_seed_width", "LWR_length_to_width_ratio", "eccentricity", "solidity",
                "PL_perimeter_length", "CS_seed_circularity"]
     final_df = pd.DataFrame(data, columns=columns)
-    final_df = filter_by_quantiles(final_df).reset_index(drop=True)  # Apply IQR filtering
+    final_df = filter_by_iqr(final_df).reset_index(drop=True)  # Apply IQR filtering
     
     return final_df
 
