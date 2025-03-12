@@ -118,9 +118,14 @@ def process_image(image_path, model):
     
     return final_df
 
+
 def process_images(input_dir, output_file, model):
     """Process all images, filter results, and save to a single table."""
     output_dir = os.path.dirname(output_file)
+
+    # Ensure the output directory exists
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     df_list = []
     for file in sorted(os.listdir(input_dir)):
@@ -128,7 +133,7 @@ def process_images(input_dir, output_file, model):
             df = process_image(os.path.join(input_dir, file), model)
             if not df.empty:
                 df_list.append(df)
-    
+
     final_df = pd.concat(df_list, ignore_index=True)
     final_df.to_csv(output_file, sep='\t', index=False)
     print(f"Results saved to {output_file}")
