@@ -72,8 +72,8 @@ def filter_by_iqr_1(df):
 # Image Processing & Feature Extraction
 def process_image(image_path, model):
     """Detect seeds and compute morphological parameters."""
-    image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)    # Convert grayscale image to 3-channel grayscale (R=G=B)
     r = model.detect([image], verbose=0)[0]
     
     data = []
