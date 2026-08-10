@@ -2,3 +2,5 @@
 .DS_Store
 /Mask_RCNN/
 /data/
+__pycache__/
+*.pyc

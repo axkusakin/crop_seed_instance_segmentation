@@ -1,37 +1,48 @@
 # What's New in This Repository
-* Updated the installation process.
-* Added support for new program versions.
+* Vendored and patched Mask R-CNN (`mrcnn/`) directly into this repository -- no
+  separate Mask-RCNN-TF2 clone step needed anymore.
+* Updated the installation process for Python 3.11 / TensorFlow 2.15.
+* Fixed correctness bugs in `grain_metrics.py` (see [PR #5](https://github.com/axkusakin/crop_seed_instance_segmentation/pull/5)).
 * Included code for calculating seed morphological parameters.
 
 ## How-to
 **1. Clone the repository:**
   ```
   git clone https://github.com/axkusakin/crop_seed_instance_segmentation.git
+  cd crop_seed_instance_segmentation
   ```
-**2. Clone the [Mask-RCNN](https://github.com/ahmedfgad/Mask-RCNN-TF2) Repository (TensorFlow 2.0)**
-  ```
-  git clone https://github.com/ahmedfgad/Mask-RCNN-TF2.git
-  ```
-**3. Set Up the Environment**
+**2. Set Up the Environment (Python 3.11 required)**
 
-Create a new Conda environment and activate it:
   ```
-  mamba create -n <env_name> python=3.7.11 --no-channel-priority
+  mamba create -n <env_name> python=3.11
   conda activate <env_name>
   ```
-**4. Install Dependencies**
+**3. Install Dependencies**
 
-Move the requirements.txt file from this repository to the Mask-RCNN-TF2 directory:
-  ```
-  cp crop_seed_instance_segmentation/requirements.txt Mask-RCNN-TF2/
-  cd Mask-RCNN-TF2
-  ```
-
-Then install the dependencies:
   ```
   pip install -r requirements.txt
-  python setup.py install
   ```
+
+`mrcnn/` (Mask R-CNN) is vendored in this repository as a patched fork of
+[ahmedfgad/Mask-RCNN-TF2](https://github.com/ahmedfgad/Mask-RCNN-TF2) (itself a
+TF2 port of [matterport/Mask_RCNN](https://github.com/matterport/Mask_RCNN)),
+patched to run under modern `tf.keras` (TensorFlow 2.15). See
+[`mrcnn/PATCHES.md`](./mrcnn/PATCHES.md) for exactly what was changed and why.
+No separate clone or `python setup.py install` step is required -- it imports
+directly as `mrcnn.model`, `mrcnn.config`, `mrcnn.utils`, etc. as long as you
+run scripts/notebooks from the repository root.
+
+**Verified working combination:** Python 3.11.15, TensorFlow 2.15.0, Keras
+2.15.0, NumPy 1.26.4. NumPy must stay below 2.0 -- TensorFlow 2.15 was built
+against the NumPy 1.x ABI and fails to import under NumPy 2.x. If you add or
+upgrade dependencies, re-verify `numpy==1.26.4` is still what gets installed.
+
+Only the inference path (`mrcnn.model.MaskRCNN(mode="inference")`, `.detect()`,
+`.load_weights()`) has been tested against this pin, matching how
+`grain_metrics.py` and `Mask_RCNN.ipynb` use it. The training-only code paths
+(`.compile()`, `.train()`, `model_temp.py` -- which was dropped as unused dead
+code) were not exercised or fixed and should be assumed broken until someone
+needs them.
 
 
 
