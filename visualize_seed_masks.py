@@ -96,7 +96,7 @@ def draw_predictions(image_bgr, result, min_score, min_contour_points, alpha):
     return output, len(accepted)
 
 
-def process_directory(input_dir, output_dir, model, min_score, min_contour_points, alpha):
+def process_directory(input_dir, output_dir, model, min_score, min_contour_points, alpha, edge_crop):
     os.makedirs(output_dir, exist_ok=True)
     image_files = [
         name for name in sorted(os.listdir(input_dir))
@@ -112,6 +112,12 @@ def process_directory(input_dir, output_dir, model, min_score, min_contour_point
         if image_bgr is None:
             print(f"Warning: could not read {image_path}; skipping.")
             continue
+        
+        # Remove the specified fraction from both lateral image edges.
+        height, width = image_bgr.shape[:2]
+        edge_px = int(round(width * edge_crop))
+        if edge_px > 0:
+            image_bgr = image_bgr[:, edge_px:width - edge_px]
 
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
@@ -147,6 +153,8 @@ def main():
                         help="Minimum contour point count (default: 100, matching grain_metrics.py)")
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
+    parser.add_argument("--edge-crop", type=float, default=0.0,
+                        help="Fraction of image width removed from each left/right edge (default: 0.0)")
     args = parser.parse_args()
 
     if not os.path.isdir(args.input):
@@ -155,12 +163,14 @@ def main():
         sys.exit(f"Error: weights file does not exist: {args.weights}")
     if not 0.0 <= args.alpha <= 1.0:
         sys.exit("Error: --alpha must be between 0 and 1.")
+    if not 0.0 <= args.edge_crop < 0.5:
+        sys.exit("Error: --edge-crop must be at least 0 and less than 0.5.")
 
     model = modellib.MaskRCNN(mode="inference", config=CONFIG, model_dir="")
     print(f"Loading weights from {args.weights}")
     model.load_weights(args.weights, by_name=True)
     process_directory(args.input, args.output_dir, model, args.min_score,
-                      args.min_contour_points, args.alpha)
+                      args.min_contour_points, args.alpha, args.edge_crop)
 
 
 if __name__ == "__main__":
