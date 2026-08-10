@@ -41,6 +41,7 @@ class InferenceConfig(Config):
     IMAGE_MIN_DIM = 512
     IMAGE_MAX_DIM = 8192
     DETECTION_MIN_CONFIDENCE = 0.0  # Detect all instances
+    DETECTION_MAX_INSTANCES = 400
     RPN_NMS_THRESHOLD = 0.4
 CONFIG = InferenceConfig()
 
