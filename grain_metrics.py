@@ -44,12 +44,13 @@ class InferenceConfig(Config):
     RPN_NMS_THRESHOLD = 0.4
 CONFIG = InferenceConfig()
 
-CONFIG = InferenceConfig()
-CLASS_NAMES = ['BG', 'SEED']
+COLUMNS = ["file_name", "object_id", "detection_score", "AS_seed_area", "L_seed_length",
+           "W_seed_width", "LWR_length_to_width_ratio", "eccentricity", "solidity",
+           "PL_perimeter_length", "CS_seed_circularity"]
 
 # Filtering functions using IQR
 def filter_by_iqr_1(df):
-    """Strict filtering for each sample."""
+    """Strict per-image filtering (stage 1 of the two-stage IQR filter)."""
     parameters_to_filter = {
         'AS_seed_area': 1.0,
         'L_seed_length': 1.0,
@@ -72,6 +73,9 @@ def filter_by_iqr_1(df):
 def process_image(image_path, model):
     """Detect seeds and compute morphological parameters."""
     image = cv2.imread(image_path)
+    if image is None:
+        print(f"Warning: could not read image {image_path}, skipping.")
+        return pd.DataFrame(columns=COLUMNS)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     r = model.detect([image], verbose=0)[0]
     
@@ -109,23 +113,26 @@ def process_image(image_path, model):
                 LWR, eccentricity, solidity, perimeter, circularity
             ])
     
-    columns = ["file_name", "object_id", "detection_score", "AS_seed_area", "L_seed_length",
-               "W_seed_width", "LWR_length_to_width_ratio", "eccentricity", "solidity",
-               "PL_perimeter_length", "CS_seed_circularity"]
-    return pd.DataFrame(data, columns=columns)
+    return pd.DataFrame(data, columns=COLUMNS)
 
 def process_images(input_dir, output_file, model):
     """Process all images, filter results, and save to a single table."""
     output_dir = os.path.dirname(output_file)
-    
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     df_list = []
     for file in sorted(os.listdir(input_dir)):
         if file.endswith(('.png', '.jpg', '.jpeg')):
             df = process_image(os.path.join(input_dir, file), model)
             if not df.empty:
-                df = filter_by_iqr_1(df).reset_index(drop=True)  # Apply first-level filtering
+                df = filter_by_iqr_1(df).reset_index(drop=True)  # Apply first-level (per-image) filtering
                 df_list.append(df)
-    
+
+    if not df_list:
+        print("Error: no detections survived filtering across all input images. Nothing to save.")
+        sys.exit(1)
+
     final_df = pd.concat(df_list, ignore_index=True)
     final_df.to_csv(output_file, sep='\t', index=False)
     print(f"Results saved to {output_file}")
@@ -133,9 +140,9 @@ def process_images(input_dir, output_file, model):
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Analyze barley seeds in images using Mask R-CNN')
-    parser.add_argument('--input', required=True, help='Path to directory containing images to analyze')
-    parser.add_argument('--output', required=True, help='Path to output file')
-    parser.add_argument('--weights', default='data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5', 
+    parser.add_argument("-i", '--input', required=True, help='Path to directory containing images to analyze')
+    parser.add_argument("-o", '--output', required=True, help='Path to output file')
+    parser.add_argument("-w", '--weights', default='data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5', 
                         help='Path to Mask R-CNN weights file')
     args = parser.parse_args()
     
@@ -155,9 +162,6 @@ def main():
     if not os.path.isfile(args.weights):
         print(f"Error: Weights file {args.weights} does not exist")
         sys.exit(1)
-    
-    # Create output directory if it doesn't exist
-    os.makedirs(args.output, exist_ok=True)
     
     # Create model
     model = modellib.MaskRCNN(mode="inference", config=CONFIG, model_dir="")
