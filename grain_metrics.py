@@ -21,9 +21,9 @@ from math import sqrt, pi
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-import keras.backend as K
 
-# Import Mask-RCNN
+# Import Mask-RCNN (mrcnn/ is vendored in this repository, patched for
+# TensorFlow 2.15 / Python 3.11 -- see mrcnn/README or repo README for details)
 try:
     import mrcnn.model as modellib
     from mrcnn.config import Config
