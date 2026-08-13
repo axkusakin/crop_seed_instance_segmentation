@@ -20,14 +20,26 @@ replicate_id = one of the dash-separated numbers in that trailing token.
 Replicate assignment
 ---------------------
 Each image may contain 1-3 plant replicates spread with an empty gap between
-them. For images with more than one replicate ID, seed centroids are
-connected into a minimum spanning tree (MST); removing the (k - 1) longest
-edges from any spanning tree always yields exactly k connected components,
-so this deterministically splits the seeds into k spatial groups regardless
-of whether the gap runs horizontally, vertically, or diagonally. Groups are
+them. For images with more than one replicate ID, seed centroids (always
+computed and clustered in pixel space, regardless of --dpi) are connected
+into a minimum spanning tree (MST); removing the (k - 1) longest edges from
+any spanning tree always yields exactly k connected components, so this
+deterministically splits the seeds into k spatial groups regardless of
+whether the gap runs horizontally, vertically, or diagonally. Groups are
 then ordered along the principal spread axis of the centroids (via PCA) and
 matched, in that order, to the replicate IDs as listed in the file name --
 the sequence in which the plants were physically laid on the imaging bed.
+
+Units
+-----
+By default, all length/area/position measurements are in pixels. Pass --dpi
+to convert them to millimetres, assuming every input image was scanned at
+that fixed resolution (mm_per_pixel = 25.4 / dpi). When --dpi is given, the
+final tables report ONLY millimetre-based columns (suffixed _mm or _mm2)
+plus the dimensionless ratios (LWR, eccentricity, solidity, circularity) --
+pixel columns are dropped from the output. Conversion happens once, on the
+fully assembled table, after replicate assignment and visualisation (which
+always operate in pixel space).
 
 Output structure
 -----------------
@@ -41,15 +53,16 @@ Everything is written under a single --output-dir:
 
 Examples
 --------
-# Tables only
+# Tables only, pixels
 python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir
 
-# Tables plus matched prediction overlays
-python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir --save-images
+# Tables plus matched prediction overlays, millimetres (500 DPI scan)
+python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
+    --save-images --dpi 500
 
 # Exclude 8% from both lateral edges, allow up to 400 detections per image
 python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
-    --save-images --edge-crop 0.08 --max-instances 400
+    --save-images --edge-crop 0.08 --max-instances 400 --dpi 500
 """
 
 import argparse
@@ -87,6 +100,7 @@ class InferenceConfig(Config):
 
 
 # Columns produced directly by detection/measurement (sample_id/replicate_id added later).
+# Always in pixels at this stage.
 METRIC_COLUMNS = [
     "file_name", "object_id", "detection_score", "AS_seed_area",
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
@@ -94,7 +108,7 @@ METRIC_COLUMNS = [
     "centroid_x", "centroid_y",
 ]
 
-# Final per-seed column order.
+# Final per-seed column order (pixel-named; renamed by convert_to_millimetres if --dpi is set).
 FINAL_COLUMNS = [
     "file_name", "sample_id", "object_id", "detection_score", "replicate_id",
     "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
@@ -102,11 +116,19 @@ FINAL_COLUMNS = [
     "centroid_x", "centroid_y",
 ]
 
-# Metrics summarised in replicates_summary.tsv and samples_summary.tsv.
-SUMMARY_METRICS = [
-    "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
-    "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+# Pixel-valued columns and how they scale when converted to millimetres:
+# length-like and position columns scale linearly (^1); area columns scale by area (^2).
+LENGTH_COLUMNS = ["L_seed_length", "W_seed_width", "PL_perimeter_length"]
+AREA_COLUMNS = ["AS_seed_area"]
+POSITION_COLUMNS = ["centroid_x", "centroid_y"]
+
+# Dimensionless columns: never converted, never renamed.
+RATIO_COLUMNS = [
+    "LWR_length_to_width_ratio", "eccentricity", "solidity", "CS_seed_circularity",
 ]
+
+# Shape metrics reported in the summary tables (position columns are excluded).
+SHAPE_METRIC_COLUMNS = LENGTH_COLUMNS + AREA_COLUMNS + RATIO_COLUMNS
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 PREDICTED_MASKS_DIRNAME = "predicted_masks"
@@ -136,7 +158,11 @@ def crop_lateral_edges(image_bgr, edge_crop):
 
 
 def detect_and_measure(result, image_name, min_score, min_contour_points):
-    """Convert model output into one metric row and one overlay object per instance."""
+    """Convert model output into one metric row and one overlay object per instance.
+
+    All length/area/position values are computed in pixels; unit conversion
+    happens later, once, on the assembled table.
+    """
     masks = result.get("masks")
     scores = result.get("scores", [])
     rows = []
@@ -224,7 +250,7 @@ def parse_sample_and_replicates(file_name):
 
 
 # --------------------------------------------------------------------------
-# Replicate assignment (spatial gap clustering)
+# Replicate assignment (spatial gap clustering, always in pixel space)
 # --------------------------------------------------------------------------
 
 def principal_axis_order(labels, centroids):
@@ -301,7 +327,7 @@ def assign_replicates(metrics_df, replicate_ids):
 
 
 # --------------------------------------------------------------------------
-# Visualisation
+# Visualisation (always drawn in pixel space, before any conversion)
 # --------------------------------------------------------------------------
 
 def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
@@ -342,25 +368,59 @@ def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
 
 
 # --------------------------------------------------------------------------
+# Unit conversion
+# --------------------------------------------------------------------------
+
+def convert_to_millimetres(df, dpi):
+    """Convert pixel-based columns to millimetres, replacing the pixel columns.
+
+    Length-like and position columns scale by mm_per_pixel; area columns
+    scale by mm_per_pixel squared. Ratio columns are left untouched. Returns
+    a new DataFrame with pixel columns replaced by their _mm / _mm2
+    equivalents.
+    """
+    mm_per_pixel = 25.4 / dpi
+    converted = df.copy()
+
+    rename_map = {}
+    for column in LENGTH_COLUMNS + POSITION_COLUMNS:
+        converted[column] = converted[column] * mm_per_pixel
+        rename_map[column] = f"{column}_mm"
+    for column in AREA_COLUMNS:
+        converted[column] = converted[column] * (mm_per_pixel ** 2)
+        rename_map[column] = f"{column}_mm2"
+
+    return converted.rename(columns=rename_map)
+
+
+def shape_metric_columns_for(dpi):
+    """Return the shape-metric column names to summarise, given the active unit."""
+    if dpi is None:
+        return SHAPE_METRIC_COLUMNS
+    length_mm = [f"{column}_mm" for column in LENGTH_COLUMNS]
+    area_mm2 = [f"{column}_mm2" for column in AREA_COLUMNS]
+    return length_mm + area_mm2 + RATIO_COLUMNS
+
+
+# --------------------------------------------------------------------------
 # Summary statistics
 # --------------------------------------------------------------------------
 
-def summarise(df, group_columns, include_replicate_count):
+def summarise(df, group_columns, metric_columns, include_replicate_count):
     """Build a summary table with seed counts and per-metric mean/sd/min/max/median."""
     aggregations = {"n_seeds": ("object_id", "count")}
     if include_replicate_count:
         aggregations["n_replicates"] = ("replicate_id", "nunique")
     aggregations["mean_detection_score"] = ("detection_score", "mean")
 
-    for metric in SUMMARY_METRICS:
+    for metric in metric_columns:
         aggregations[f"{metric}_mean"] = (metric, "mean")
         aggregations[f"{metric}_sd"] = (metric, "std")
         aggregations[f"{metric}_min"] = (metric, "min")
         aggregations[f"{metric}_max"] = (metric, "max")
         aggregations[f"{metric}_median"] = (metric, "median")
 
-    summary = df.groupby(group_columns, dropna=False).agg(**aggregations).reset_index()
-    return summary
+    return df.groupby(group_columns, dropna=False).agg(**aggregations).reset_index()
 
 
 # --------------------------------------------------------------------------
@@ -434,6 +494,10 @@ def process_images(args, model):
     ).reset_index(drop=True)
     final_df = final_df[FINAL_COLUMNS]
 
+    if args.dpi is not None:
+        final_df = convert_to_millimetres(final_df, args.dpi)
+        print(f"Converted pixel measurements to millimetres using {args.dpi} DPI.")
+
     seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
     final_df.to_csv(seed_path, sep="\t", index=False)
     print(f"Per-seed table saved to {seed_path}")
@@ -443,15 +507,19 @@ def process_images(args, model):
         print("Warning: no rows had a valid sample_id/replicate_id; summary tables were not created.")
         return
 
+    metric_columns = shape_metric_columns_for(args.dpi)
+
     replicates_summary = summarise(
-        labelled_df, group_columns=["sample_id", "replicate_id"], include_replicate_count=False
+        labelled_df, group_columns=["sample_id", "replicate_id"],
+        metric_columns=metric_columns, include_replicate_count=False,
     )
     replicates_path = os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME)
     replicates_summary.to_csv(replicates_path, sep="\t", index=False)
     print(f"Replicate summary saved to {replicates_path}")
 
     samples_summary = summarise(
-        labelled_df, group_columns=["sample_id"], include_replicate_count=True
+        labelled_df, group_columns=["sample_id"],
+        metric_columns=metric_columns, include_replicate_count=True,
     )
     samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
     samples_summary.to_csv(samples_path, sep="\t", index=False)
@@ -486,6 +554,13 @@ def main():
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
     parser.add_argument("--max-instances", type=int, default=400,
                         help="Maximum final Mask R-CNN detections per image (default: 400)")
+    parser.add_argument("--dpi", type=float, default=None,
+                        help=(
+                            "Scan resolution in dots per inch. When set, converts all "
+                            "length/area/position columns to millimetres "
+                            "(mm_per_pixel = 25.4 / dpi) and drops the pixel-based columns "
+                            "from the output. Default: None (report pixels)."
+                        ))
     args = parser.parse_args()
 
     if not os.path.isdir(args.input):
@@ -498,6 +573,8 @@ def main():
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
         sys.exit("Error: --max-instances must be at least 1.")
+    if args.dpi is not None and args.dpi <= 0:
+        sys.exit("Error: --dpi must be a positive number.")
 
     seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
     if os.path.exists(seed_path):
