@@ -1,41 +1,54 @@
 #!/usr/bin/env python3
-"""Detect barley grains, save metrics with replicate IDs, and optionally save overlays.
+"""Detect barley grains, save per-seed metrics with replicate IDs, summary
+statistics, and optionally save mask overlays -- all under one output folder.
 
 One Mask R-CNN inference pass per image. No IQR filtering is applied -- every
 predicted object that passes --min-score and --min-contour-points is written
-to the TSV. Each image label in the optional overlay is the exact zero-based
-object_id in the TSV.
+to the per-seed table.
+
+File-name parsing
+------------------
+    SV1_18-19_015_1-2-3.jpg  -> sample_id "SV1_18-19_015", replicate IDs [1, 2, 3]
+    SV2_19-20_043_1-9-12.jpg -> sample_id "SV2_19-20_043", replicate IDs [1, 9, 12]
+    SV_022_5-4-8.jpg         -> sample_id "SV_022",        replicate IDs [5, 4, 8]
+    SV_007_4.jpg              -> sample_id "SV_007",        replicate ID  [4] (single plant)
+
+sample_id  = every underscore-separated part of the file name except the
+             trailing replicate token.
+replicate_id = one of the dash-separated numbers in that trailing token.
 
 Replicate assignment
 ---------------------
 Each image may contain 1-3 plant replicates spread with an empty gap between
-them. Replicate IDs are parsed from the trailing, underscore-separated token
-of the file name, e.g.:
-
-    SV1_18-19_015_1-2-3.jpg  -> replicate IDs [1, 2, 3]
-    SV2_19-20_043_1-9-12.jpg -> replicate IDs [1, 9, 12]
-    SV_022_5-4-8.jpg         -> replicate IDs [5, 4, 8]
-    SV_007_4.jpg              -> replicate ID  [4]        (single plant, no split)
-
-For images with more than one replicate ID, seed centroids are connected
-into a minimum spanning tree (MST); removing the (k - 1) longest edges from
-any spanning tree always yields exactly k connected components, so this
-deterministically splits the seeds into k spatial groups regardless of
-whether the gap runs horizontally, vertically, or diagonally. Groups are
+them. For images with more than one replicate ID, seed centroids are
+connected into a minimum spanning tree (MST); removing the (k - 1) longest
+edges from any spanning tree always yields exactly k connected components,
+so this deterministically splits the seeds into k spatial groups regardless
+of whether the gap runs horizontally, vertically, or diagonally. Groups are
 then ordered along the principal spread axis of the centroids (via PCA) and
 matched, in that order, to the replicate IDs as listed in the file name --
 the sequence in which the plants were physically laid on the imaging bed.
 
+Output structure
+-----------------
+Everything is written under a single --output-dir:
+
+    <output-dir>/
+        seed_parameters.tsv      one row per detected seed
+        replicates_summary.tsv   summary stats per (sample_id, replicate_id)
+        samples_summary.tsv      summary stats per sample_id (all replicates combined)
+        predicted_masks/         only created if --save-images is passed
+
 Examples
 --------
-# TSV only
-python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv
+# Tables only
+python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir
 
-# TSV plus matched prediction overlays
-python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv --save-images
+# Tables plus matched prediction overlays
+python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir --save-images
 
 # Exclude 8% from both lateral edges, allow up to 400 detections per image
-python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv \
+python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
     --save-images --edge-crop 0.08 --max-instances 400
 """
 
@@ -73,7 +86,7 @@ class InferenceConfig(Config):
     RPN_NMS_THRESHOLD = 0.4
 
 
-# Columns produced directly by detection/measurement (no replicate_id yet).
+# Columns produced directly by detection/measurement (sample_id/replicate_id added later).
 METRIC_COLUMNS = [
     "file_name", "object_id", "detection_score", "AS_seed_area",
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
@@ -81,15 +94,25 @@ METRIC_COLUMNS = [
     "centroid_x", "centroid_y",
 ]
 
-# Final column order: replicate_id placed right after detection_score (4th column).
+# Final per-seed column order.
 FINAL_COLUMNS = [
-    "file_name", "object_id", "detection_score", "replicate_id",
+    "file_name", "sample_id", "object_id", "detection_score", "replicate_id",
     "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
     "centroid_x", "centroid_y",
 ]
 
+# Metrics summarised in replicates_summary.tsv and samples_summary.tsv.
+SUMMARY_METRICS = [
+    "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
+    "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+]
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+PREDICTED_MASKS_DIRNAME = "predicted_masks"
+SEED_PARAMETERS_FILENAME = "seed_parameters.tsv"
+REPLICATES_SUMMARY_FILENAME = "replicates_summary.tsv"
+SAMPLES_SUMMARY_FILENAME = "samples_summary.tsv"
 
 
 # --------------------------------------------------------------------------
@@ -183,19 +206,26 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
 
 
 # --------------------------------------------------------------------------
-# Replicate assignment
+# File-name parsing: sample_id + replicate IDs
 # --------------------------------------------------------------------------
 
-def parse_replicate_ids(file_name):
-    """Return the ordered list of replicate IDs encoded in a file name."""
+def parse_sample_and_replicates(file_name):
+    """Split a file name into (sample_id, ordered replicate_ids)."""
     base = os.path.splitext(file_name)[0]
-    last_token = base.rsplit("_", 1)[-1]
+    sample_id, _, last_token = base.rpartition("_")
+    if not sample_id:
+        raise ValueError(f"file name has no sample/replicate separator: {file_name!r}")
     if not re.fullmatch(r"\d+(-\d+)*", last_token):
         raise ValueError(
             f"could not parse replicate token from file name (trailing token was {last_token!r})"
         )
-    return [int(part) for part in last_token.split("-")]
+    replicate_ids = [int(part) for part in last_token.split("-")]
+    return sample_id, replicate_ids
 
+
+# --------------------------------------------------------------------------
+# Replicate assignment (spatial gap clustering)
+# --------------------------------------------------------------------------
 
 def principal_axis_order(labels, centroids):
     """Order cluster labels along the first principal component of centroids."""
@@ -253,11 +283,9 @@ def split_into_groups(centroids, num_groups):
     return labels
 
 
-def assign_replicates(metrics_df, file_name):
+def assign_replicates(metrics_df, replicate_ids):
     """Return a list of replicate IDs aligned to metrics_df's row order."""
-    replicate_ids = parse_replicate_ids(file_name)
     num_replicates = len(replicate_ids)
-
     if num_replicates == 1:
         return [replicate_ids[0]] * len(metrics_df)
 
@@ -277,7 +305,7 @@ def assign_replicates(metrics_df, file_name):
 # --------------------------------------------------------------------------
 
 def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
-    """Draw every TSV object, labelled with its object_id and replicate_id."""
+    """Draw every retained object, labelled with its object_id and replicate_id."""
     output = image_bgr.copy()
     overlay = output.copy()
 
@@ -305,7 +333,7 @@ def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
         cv2.putText(output, label, (x + 4, y - 4), cv2.FONT_HERSHEY_SIMPLEX,
                     0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
-    summary = f"Objects in TSV: {len(instances)}"
+    summary = f"Objects in table: {len(instances)}"
     cv2.putText(output, summary, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
                 0.75, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(output, summary, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
@@ -314,12 +342,35 @@ def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
 
 
 # --------------------------------------------------------------------------
+# Summary statistics
+# --------------------------------------------------------------------------
+
+def summarise(df, group_columns, include_replicate_count):
+    """Build a summary table with seed counts and per-metric mean/sd/min/max/median."""
+    aggregations = {"n_seeds": ("object_id", "count")}
+    if include_replicate_count:
+        aggregations["n_replicates"] = ("replicate_id", "nunique")
+    aggregations["mean_detection_score"] = ("detection_score", "mean")
+
+    for metric in SUMMARY_METRICS:
+        aggregations[f"{metric}_mean"] = (metric, "mean")
+        aggregations[f"{metric}_sd"] = (metric, "std")
+        aggregations[f"{metric}_min"] = (metric, "min")
+        aggregations[f"{metric}_max"] = (metric, "max")
+        aggregations[f"{metric}_median"] = (metric, "median")
+
+    summary = df.groupby(group_columns, dropna=False).agg(**aggregations).reset_index()
+    return summary
+
+
+# --------------------------------------------------------------------------
 # Main processing loop
 # --------------------------------------------------------------------------
 
 def process_images(args, model):
+    predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
     if args.save_images:
-        os.makedirs(args.predicted_dir, exist_ok=True)
+        os.makedirs(predicted_dir, exist_ok=True)
 
     image_files = [
         filename for filename in sorted(os.listdir(args.input))
@@ -347,13 +398,15 @@ def process_images(args, model):
         replicate_by_object_id = {}
         if not metrics.empty:
             try:
-                replicate_ids = assign_replicates(metrics, filename)
-                metrics["replicate_id"] = replicate_ids
+                sample_id, replicate_ids = parse_sample_and_replicates(filename)
+                metrics["sample_id"] = sample_id
+                metrics["replicate_id"] = assign_replicates(metrics, replicate_ids)
                 replicate_by_object_id = dict(
                     zip(metrics["object_id"], metrics["replicate_id"])
                 )
             except (ValueError, RuntimeError) as error:
-                print(f"Warning: {filename}: {error}. Leaving replicate_id blank.")
+                print(f"Warning: {filename}: {error}. Leaving sample_id/replicate_id blank.")
+                metrics["sample_id"] = pd.NA
                 metrics["replicate_id"] = pd.NA
             tables.append(metrics)
 
@@ -362,19 +415,16 @@ def process_images(args, model):
                 image_bgr, instances, replicate_by_object_id, args.alpha
             )
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
-            output_path = os.path.join(args.predicted_dir, output_name)
+            output_path = os.path.join(predicted_dir, output_name)
             if not cv2.imwrite(output_path, visualisation):
                 print(f"Warning: could not write {output_path}")
 
-        print(f"{filename}: {len(instances)} objects written to TSV")
+        print(f"{filename}: {len(instances)} objects detected")
 
     if not tables:
         sys.exit("Error: no objects passed the selected score and contour filters. Nothing to save.")
 
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")
+    os.makedirs(args.output_dir, exist_ok=True)
 
     final_df = pd.concat(tables, ignore_index=True)
     final_df = final_df.sort_values(
@@ -382,30 +432,50 @@ def process_images(args, model):
         kind="stable",
         na_position="last",
     ).reset_index(drop=True)
-
     final_df = final_df[FINAL_COLUMNS]
-    final_df.to_csv(args.output, sep="\t", index=False)
-    print(f"Results saved to {args.output}")
+
+    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
+    final_df.to_csv(seed_path, sep="\t", index=False)
+    print(f"Per-seed table saved to {seed_path}")
+
+    labelled_df = final_df.dropna(subset=["sample_id", "replicate_id"])
+    if labelled_df.empty:
+        print("Warning: no rows had a valid sample_id/replicate_id; summary tables were not created.")
+        return
+
+    replicates_summary = summarise(
+        labelled_df, group_columns=["sample_id", "replicate_id"], include_replicate_count=False
+    )
+    replicates_path = os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME)
+    replicates_summary.to_csv(replicates_path, sep="\t", index=False)
+    print(f"Replicate summary saved to {replicates_path}")
+
+    samples_summary = summarise(
+        labelled_df, group_columns=["sample_id"], include_replicate_count=True
+    )
+    samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
+    samples_summary.to_csv(samples_path, sep="\t", index=False)
+    print(f"Sample summary saved to {samples_path}")
+
     if args.save_images:
-        print(f"Matched prediction visualisations saved in {args.predicted_dir}")
+        print(f"Prediction overlays saved in {predicted_dir}")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Detect barley grains, save metrics with replicate IDs, and optionally "
-            "save prediction overlays with TSV-matched object IDs."
+            "Detect barley grains, save per-seed metrics with replicate IDs, build "
+            "replicate- and sample-level summary tables, and optionally save overlays."
         )
     )
     parser.add_argument("-i", "--input", required=True, help="Directory containing input images")
-    parser.add_argument("-o", "--output", required=True, help="Output TSV path")
+    parser.add_argument("-o", "--output-dir", required=True,
+                        help="Root output directory for all generated tables and images")
     parser.add_argument("-w", "--weights",
                         default="data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5",
                         help="Mask R-CNN weights path")
     parser.add_argument("--save-images", action="store_true",
-                        help="Save prediction overlays in addition to the TSV")
-    parser.add_argument("-d", "--predicted-dir", default="predicted_images",
-                        help="Overlay output directory (default: predicted_images)")
+                        help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
     parser.add_argument("--edge-crop", type=float, default=0.0,
                         help="Fraction removed from each left/right image edge (default: 0.0)")
     parser.add_argument("--min-score", type=float, default=0.95,
@@ -428,8 +498,10 @@ def main():
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
         sys.exit("Error: --max-instances must be at least 1.")
-    if os.path.exists(args.output):
-        response = input(f"Warning: {args.output} already exists. Overwrite? (y/n): ")
+
+    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
+    if os.path.exists(seed_path):
+        response = input(f"Warning: {seed_path} already exists. Overwrite? (y/n): ")
         if response.lower() != "y":
             sys.exit("Process aborted by user.")
 

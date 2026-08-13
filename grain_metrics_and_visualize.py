@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
-"""Calculate barley-grain metrics and optionally save matched mask overlays.
+"""Calculate barley-grain metrics, per-accession summary stats, and optional overlays.
 
 No IQR filtering is applied. Every predicted object that passes --min-score and
---min-contour-points is written to the TSV and, when --save-images is used,
-drawn in the corresponding overlay. The image label is the exact zero-based
-object_id in the TSV, enabling later manual removal of selected objects.
+--min-contour-points is written to the per-seed table and, when --save-images
+is used, drawn in the corresponding overlay. The image label is the exact
+zero-based object_id in the table, enabling later manual removal of selected
+objects.
+
+Metrics are calculated for the whole accession represented by each image --
+this script does not split seeds into replicates.
+
+Output structure
+-----------------
+Everything is written under a single --output-dir:
+
+    <output-dir>/
+        seed_parameters.tsv    one row per detected seed
+        samples_summary.tsv    summary stats per accession (file_name)
+        predicted_masks/       only created if --save-images is passed
 
 Examples
 --------
-# TSV only
-python grain_metrics_no_iqr.py -i images -o results.tsv
+# Tables only
+python grain_metrics_no_iqr.py -i images -o output_dir
 
-# TSV plus one matched prediction overlay per image
-python grain_metrics_no_iqr.py -i images -o results.tsv --save-images
+# Tables plus one matched prediction overlay per image
+python grain_metrics_no_iqr.py -i images -o output_dir --save-images
 
 # Exclude 8% from both lateral edges and allow up to 400 final detections
-python grain_metrics_no_iqr.py -i images -o results.tsv --save-images \
+python grain_metrics_no_iqr.py -i images -o output_dir --save-images \
     --edge-crop 0.08 --max-instances 400
 """
 
@@ -53,7 +66,17 @@ COLUMNS = [
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
 ]
+
+# Metrics summarised in samples_summary.tsv.
+SUMMARY_METRICS = [
+    "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
+    "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+]
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+PREDICTED_MASKS_DIRNAME = "predicted_masks"
+SEED_PARAMETERS_FILENAME = "seed_parameters.tsv"
+SAMPLES_SUMMARY_FILENAME = "samples_summary.tsv"
 
 
 def instance_colour(object_id):
@@ -93,7 +116,7 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
         if not contours:
             continue
 
-        # One model instance yields one TSV row. Use the largest connected
+        # One model instance yields one table row. Use the largest connected
         # component if a mask contains small disconnected fragments.
         contour = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(contour)
@@ -137,7 +160,7 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
 
 
 def draw_predictions(image_bgr, instances, alpha):
-    """Draw every TSV object, labelled with its exact TSV object_id."""
+    """Draw every retained object, labelled with its exact table object_id."""
     output = image_bgr.copy()
     overlay = output.copy()
 
@@ -164,7 +187,7 @@ def draw_predictions(image_bgr, instances, alpha):
         cv2.putText(output, label, (x + 4, y - 4), cv2.FONT_HERSHEY_SIMPLEX,
                     0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
-    summary = f"Objects in TSV: {len(instances)}"
+    summary = f"Objects in table: {len(instances)}"
     cv2.putText(output, summary, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
                 0.75, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(output, summary, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
@@ -172,9 +195,26 @@ def draw_predictions(image_bgr, instances, alpha):
     return output
 
 
+def summarise_by_sample(df):
+    """Build a per-accession (file_name) summary with counts and metric stats."""
+    aggregations = {
+        "n_seeds": ("object_id", "count"),
+        "mean_detection_score": ("detection_score", "mean"),
+    }
+    for metric in SUMMARY_METRICS:
+        aggregations[f"{metric}_mean"] = (metric, "mean")
+        aggregations[f"{metric}_sd"] = (metric, "std")
+        aggregations[f"{metric}_min"] = (metric, "min")
+        aggregations[f"{metric}_max"] = (metric, "max")
+        aggregations[f"{metric}_median"] = (metric, "median")
+
+    return df.groupby("file_name", dropna=False).agg(**aggregations).reset_index()
+
+
 def process_images(args, model):
+    predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
     if args.save_images:
-        os.makedirs(args.predicted_dir, exist_ok=True)
+        os.makedirs(predicted_dir, exist_ok=True)
 
     image_files = [
         filename for filename in sorted(os.listdir(args.input))
@@ -204,40 +244,47 @@ def process_images(args, model):
         if args.save_images:
             visualisation = draw_predictions(image_bgr, instances, args.alpha)
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
-            output_path = os.path.join(args.predicted_dir, output_name)
+            output_path = os.path.join(predicted_dir, output_name)
             if not cv2.imwrite(output_path, visualisation):
                 print(f"Warning: could not write {output_path}")
 
-        print(f"{filename}: {len(instances)} objects written to TSV")
+        print(f"{filename}: {len(instances)} objects detected")
 
     if not tables:
         sys.exit("Error: no objects passed the selected score and contour filters. Nothing to save.")
 
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")    
+    os.makedirs(args.output_dir, exist_ok=True)
 
     final_df = pd.concat(tables, ignore_index=True)
-    final_df.to_csv(args.output, sep="\t", index=False)
-    print(f"Results saved to {args.output}")
+    final_df = final_df.sort_values(
+        by=["file_name", "object_id"], kind="stable"
+    ).reset_index(drop=True)
+
+    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
+    final_df.to_csv(seed_path, sep="\t", index=False)
+    print(f"Per-seed table saved to {seed_path}")
+
+    samples_summary = summarise_by_sample(final_df)
+    samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
+    samples_summary.to_csv(samples_path, sep="\t", index=False)
+    print(f"Sample summary saved to {samples_path}")
+
     if args.save_images:
-        print(f"Matched prediction visualisations saved in {args.predicted_dir}")
+        print(f"Prediction overlays saved in {predicted_dir}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Calculate unfiltered seed metrics and optional overlays with TSV-matched object IDs."
+        description="Calculate unfiltered seed metrics, per-accession summary stats, and optional overlays."
     )
     parser.add_argument("-i", "--input", required=True, help="Directory containing input images")
-    parser.add_argument("-o", "--output", required=True, help="Output TSV path")
+    parser.add_argument("-o", "--output-dir", required=True,
+                        help="Root output directory for all generated tables and images")
     parser.add_argument("-w", "--weights",
                         default="data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5",
                         help="Mask R-CNN weights path")
     parser.add_argument("--save-images", action="store_true",
-                        help="Save prediction overlays in addition to the TSV")
-    parser.add_argument("-d", "--predicted-dir", default="predicted_images",
-                        help="Overlay output directory (default: predicted_images)")
+                        help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
     parser.add_argument("--edge-crop", type=float, default=0.0,
                         help="Fraction removed from each left/right image edge (default: 0.0)")
     parser.add_argument("--min-score", type=float, default=0.95,
@@ -260,8 +307,10 @@ def main():
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
         sys.exit("Error: --max-instances must be at least 1.")
-    if os.path.exists(args.output):
-        response = input(f"Warning: {args.output} already exists. Overwrite? (y/n): ")
+
+    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
+    if os.path.exists(seed_path):
+        response = input(f"Warning: {seed_path} already exists. Overwrite? (y/n): ")
         if response.lower() != "y":
             sys.exit("Process aborted by user.")
 
