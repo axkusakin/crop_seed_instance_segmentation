@@ -1,26 +1,47 @@
 #!/usr/bin/env python3
-"""Calculate barley-grain metrics and optionally save matched mask overlays.
+"""Detect barley grains, save metrics with replicate IDs, and optionally save overlays.
 
-No IQR filtering is applied. Every predicted object that passes --min-score and
---min-contour-points is written to the TSV and, when --save-images is used,
-drawn in the corresponding overlay. The image label is the exact zero-based
-object_id in the TSV, enabling later manual removal of selected objects.
+One Mask R-CNN inference pass per image. No IQR filtering is applied -- every
+predicted object that passes --min-score and --min-contour-points is written
+to the TSV. Each image label in the optional overlay is the exact zero-based
+object_id in the TSV.
+
+Replicate assignment
+---------------------
+Each image may contain 1-3 plant replicates spread with an empty gap between
+them. Replicate IDs are parsed from the trailing, underscore-separated token
+of the file name, e.g.:
+
+    SV1_18-19_015_1-2-3.jpg  -> replicate IDs [1, 2, 3]
+    SV2_19-20_043_1-9-12.jpg -> replicate IDs [1, 9, 12]
+    SV_022_5-4-8.jpg         -> replicate IDs [5, 4, 8]
+    SV_007_4.jpg              -> replicate ID  [4]        (single plant, no split)
+
+For images with more than one replicate ID, seed centroids are connected
+into a minimum spanning tree (MST); removing the (k - 1) longest edges from
+any spanning tree always yields exactly k connected components, so this
+deterministically splits the seeds into k spatial groups regardless of
+whether the gap runs horizontally, vertically, or diagonally. Groups are
+then ordered along the principal spread axis of the centroids (via PCA) and
+matched, in that order, to the replicate IDs as listed in the file name --
+the sequence in which the plants were physically laid on the imaging bed.
 
 Examples
 --------
 # TSV only
-python grain_metrics_no_iqr.py -i images -o results.tsv
+python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv
 
-# TSV plus one matched prediction overlay per image
-python grain_metrics_no_iqr.py -i images -o results.tsv --save-images
+# TSV plus matched prediction overlays
+python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv --save-images
 
-# Exclude 8% from both lateral edges and allow up to 400 final detections
-python grain_metrics_no_iqr.py -i images -o results.tsv --save-images \
-    --edge-crop 0.08 --max-instances 400
+# Exclude 8% from both lateral edges, allow up to 400 detections per image
+python grain_metrics_and_visualize_with_replicates.py -i images -o results.tsv \
+    --save-images --edge-crop 0.08 --max-instances 400
 """
 
 import argparse
 import os
+import re
 import sys
 
 import cv2
@@ -29,6 +50,10 @@ import pandas as pd
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf  # noqa: F401
+
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
+from scipy.spatial.distance import pdist, squareform
 
 try:
     import mrcnn.model as modellib
@@ -48,13 +73,28 @@ class InferenceConfig(Config):
     RPN_NMS_THRESHOLD = 0.4
 
 
-COLUMNS = [
+# Columns produced directly by detection/measurement (no replicate_id yet).
+METRIC_COLUMNS = [
     "file_name", "object_id", "detection_score", "AS_seed_area",
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+    "centroid_x", "centroid_y",
 ]
+
+# Final column order: replicate_id placed right after detection_score (4th column).
+FINAL_COLUMNS = [
+    "file_name", "object_id", "detection_score", "replicate_id",
+    "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
+    "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+    "centroid_x", "centroid_y",
+]
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 
+
+# --------------------------------------------------------------------------
+# Detection and measurement
+# --------------------------------------------------------------------------
 
 def instance_colour(object_id):
     """Return a reproducible high-contrast BGR colour for an object ID."""
@@ -80,7 +120,7 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
     instances = []
 
     if masks is None or masks.ndim != 3 or masks.shape[-1] == 0:
-        return pd.DataFrame(columns=COLUMNS), instances
+        return pd.DataFrame(columns=METRIC_COLUMNS), instances
 
     for object_id in range(masks.shape[-1]):
         score = float(scores[object_id])
@@ -93,8 +133,6 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
         if not contours:
             continue
 
-        # One model instance yields one TSV row. Use the largest connected
-        # component if a mask contains small disconnected fragments.
         contour = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(contour)
         rect = cv2.minAreaRect(contour)
@@ -113,6 +151,12 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
         if hull_area <= 0 or perimeter <= 0:
             continue
 
+        moments = cv2.moments(contour)
+        if moments["m00"] == 0:
+            continue
+        centroid_x = moments["m10"] / moments["m00"]
+        centroid_y = moments["m01"] / moments["m00"]
+
         rows.append([
             image_name,
             object_id,
@@ -125,6 +169,8 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
             area / hull_area,
             perimeter,
             (4 * np.pi * area) / (perimeter ** 2),
+            centroid_x,
+            centroid_y,
         ])
         instances.append({
             "object_id": object_id,
@@ -133,11 +179,105 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
             "contour": contour,
         })
 
-    return pd.DataFrame(rows, columns=COLUMNS), instances
+    return pd.DataFrame(rows, columns=METRIC_COLUMNS), instances
 
 
-def draw_predictions(image_bgr, instances, alpha):
-    """Draw every TSV object, labelled with its exact TSV object_id."""
+# --------------------------------------------------------------------------
+# Replicate assignment
+# --------------------------------------------------------------------------
+
+def parse_replicate_ids(file_name):
+    """Return the ordered list of replicate IDs encoded in a file name."""
+    base = os.path.splitext(file_name)[0]
+    last_token = base.rsplit("_", 1)[-1]
+    if not re.fullmatch(r"\d+(-\d+)*", last_token):
+        raise ValueError(
+            f"could not parse replicate token from file name (trailing token was {last_token!r})"
+        )
+    return [int(part) for part in last_token.split("-")]
+
+
+def principal_axis_order(labels, centroids):
+    """Order cluster labels along the first principal component of centroids."""
+    centered = centroids - centroids.mean(axis=0)
+    covariance = np.cov(centered, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    principal_axis = eigenvectors[:, np.argmax(eigenvalues)]
+    projections = centered @ principal_axis
+
+    unique_labels = np.unique(labels)
+    mean_projection = {
+        label: projections[labels == label].mean() for label in unique_labels
+    }
+    return sorted(unique_labels, key=lambda label: mean_projection[label])
+
+
+def split_into_groups(centroids, num_groups):
+    """Split centroids into num_groups clusters using an MST gap cut."""
+    num_points = centroids.shape[0]
+    if num_points < num_groups:
+        raise ValueError(
+            f"only {num_points} seed(s) detected but {num_groups} replicate IDs expected"
+        )
+
+    distances = squareform(pdist(centroids))
+    mst = minimum_spanning_tree(csr_matrix(distances))
+    mst_coo = mst.tocoo()
+
+    edges = list(zip(mst_coo.row, mst_coo.col, mst_coo.data))
+    edges.sort(key=lambda edge: edge[2], reverse=True)
+
+    edges_to_cut = edges[: num_groups - 1]
+    cut_set = {(row, col) for row, col, _ in edges_to_cut} | {
+        (col, row) for row, col, _ in edges_to_cut
+    }
+
+    kept_row, kept_col, kept_data = [], [], []
+    for row, col, weight in zip(mst_coo.row, mst_coo.col, mst_coo.data):
+        if (row, col) in cut_set:
+            continue
+        kept_row.append(row)
+        kept_col.append(col)
+        kept_data.append(weight)
+
+    pruned = csr_matrix(
+        (kept_data, (kept_row, kept_col)), shape=(num_points, num_points)
+    )
+    n_components, labels = connected_components(pruned, directed=False)
+
+    if n_components != num_groups:
+        raise RuntimeError(
+            f"expected {num_groups} groups but obtained {n_components} "
+            "(this should not happen for a valid spanning tree cut)"
+        )
+    return labels
+
+
+def assign_replicates(metrics_df, file_name):
+    """Return a list of replicate IDs aligned to metrics_df's row order."""
+    replicate_ids = parse_replicate_ids(file_name)
+    num_replicates = len(replicate_ids)
+
+    if num_replicates == 1:
+        return [replicate_ids[0]] * len(metrics_df)
+
+    centroids = metrics_df[["centroid_x", "centroid_y"]].to_numpy(dtype=float)
+    labels = split_into_groups(centroids, num_replicates)
+    ordered_labels = principal_axis_order(labels, centroids)
+
+    label_to_replicate = {
+        label: replicate_id
+        for label, replicate_id in zip(ordered_labels, replicate_ids)
+    }
+    return [label_to_replicate[label] for label in labels]
+
+
+# --------------------------------------------------------------------------
+# Visualisation
+# --------------------------------------------------------------------------
+
+def draw_predictions(image_bgr, instances, replicate_by_object_id, alpha):
+    """Draw every TSV object, labelled with its object_id and replicate_id."""
     output = image_bgr.copy()
     overlay = output.copy()
 
@@ -158,11 +298,12 @@ def draw_predictions(image_bgr, instances, alpha):
         else:
             x, y = contour.reshape(-1, 2)[0]
 
-        label = f"{object_id}: {instance['score']:.2f}"
+        replicate_id = replicate_by_object_id.get(object_id, "?")
+        label = f"{object_id} (rep {replicate_id}): {instance['score']:.2f}"
         cv2.putText(output, label, (x + 4, y - 4), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45, (0, 0, 0), 3, cv2.LINE_AA)
+                    0.42, (0, 0, 0), 3, cv2.LINE_AA)
         cv2.putText(output, label, (x + 4, y - 4), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                    0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
     summary = f"Objects in TSV: {len(instances)}"
     cv2.putText(output, summary, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
@@ -171,6 +312,10 @@ def draw_predictions(image_bgr, instances, alpha):
                 0.75, (255, 255, 255), 1, cv2.LINE_AA)
     return output
 
+
+# --------------------------------------------------------------------------
+# Main processing loop
+# --------------------------------------------------------------------------
 
 def process_images(args, model):
     if args.save_images:
@@ -198,11 +343,24 @@ def process_images(args, model):
         metrics, instances = detect_and_measure(
             result, filename, args.min_score, args.min_contour_points
         )
+
+        replicate_by_object_id = {}
         if not metrics.empty:
+            try:
+                replicate_ids = assign_replicates(metrics, filename)
+                metrics["replicate_id"] = replicate_ids
+                replicate_by_object_id = dict(
+                    zip(metrics["object_id"], metrics["replicate_id"])
+                )
+            except (ValueError, RuntimeError) as error:
+                print(f"Warning: {filename}: {error}. Leaving replicate_id blank.")
+                metrics["replicate_id"] = pd.NA
             tables.append(metrics)
 
         if args.save_images:
-            visualisation = draw_predictions(image_bgr, instances, args.alpha)
+            visualisation = draw_predictions(
+                image_bgr, instances, replicate_by_object_id, args.alpha
+            )
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
             output_path = os.path.join(args.predicted_dir, output_name)
             if not cv2.imwrite(output_path, visualisation):
@@ -216,9 +374,16 @@ def process_images(args, model):
     output_dir = os.path.dirname(args.output)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")    
+        print(f"Created output directory: {output_dir}")
 
     final_df = pd.concat(tables, ignore_index=True)
+    final_df = final_df.sort_values(
+        by=["file_name", "replicate_id", "object_id"],
+        kind="stable",
+        na_position="last",
+    ).reset_index(drop=True)
+
+    final_df = final_df[FINAL_COLUMNS]
     final_df.to_csv(args.output, sep="\t", index=False)
     print(f"Results saved to {args.output}")
     if args.save_images:
@@ -227,7 +392,10 @@ def process_images(args, model):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Calculate unfiltered seed metrics and optional overlays with TSV-matched object IDs."
+        description=(
+            "Detect barley grains, save metrics with replicate IDs, and optionally "
+            "save prediction overlays with TSV-matched object IDs."
+        )
     )
     parser.add_argument("-i", "--input", required=True, help="Directory containing input images")
     parser.add_argument("-o", "--output", required=True, help="Output TSV path")
