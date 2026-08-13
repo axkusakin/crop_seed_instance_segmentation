@@ -49,6 +49,7 @@ Everything is written under a single --output-dir:
         seed_parameters.tsv      one row per detected seed
         replicates_summary.tsv   summary stats per (sample_id, replicate_id)
         samples_summary.tsv      summary stats per sample_id (all replicates combined)
+        run_log.txt              run parameters and a per-run summary
         predicted_masks/         only created if --save-images is passed
 
 Examples
@@ -69,13 +70,22 @@ import argparse
 import os
 import re
 import sys
+import time
+from datetime import datetime
 
 import cv2
 import numpy as np
 import pandas as pd
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow as tf  # noqa: F401
+os.environ["GRPC_VERBOSITY"] = "ERROR"
+os.environ["GLOG_minloglevel"] = "2"
+
+import tensorflow as tf
+tf.get_logger().setLevel("ERROR")
+
+# Disable the Grappler cost-based optimizations that trigger the CropAndResize warning.
+tf.config.optimizer.set_experimental_options({"disable_meta_optimizer": True})
 
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
@@ -135,6 +145,37 @@ PREDICTED_MASKS_DIRNAME = "predicted_masks"
 SEED_PARAMETERS_FILENAME = "seed_parameters.tsv"
 REPLICATES_SUMMARY_FILENAME = "replicates_summary.tsv"
 SAMPLES_SUMMARY_FILENAME = "samples_summary.tsv"
+RUN_LOG_FILENAME = "run_log.txt"
+
+
+# --------------------------------------------------------------------------
+# Console/logging helpers
+# --------------------------------------------------------------------------
+
+def format_duration(seconds):
+    """Format a duration in seconds as e.g. '1h 03m 12s', '3m 05s', or '4.2s'."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return f"{minutes}m {secs:02d}s"
+
+
+class RunLog:
+    """Collects console-style lines and writes them to a run_log.txt at the end."""
+
+    def __init__(self):
+        self.lines = []
+
+    def emit(self, message=""):
+        print(message)
+        self.lines.append(message)
+
+    def write(self, path):
+        with open(path, "w") as handle:
+            handle.write("\n".join(self.lines) + "\n")
 
 
 # --------------------------------------------------------------------------
@@ -161,15 +202,18 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
     """Convert model output into one metric row and one overlay object per instance.
 
     All length/area/position values are computed in pixels; unit conversion
-    happens later, once, on the assembled table.
+    happens later, once, on the assembled table. Returns the metrics
+    DataFrame, the overlay instances, and the raw (pre-filter) instance
+    count reported by the model, for console diagnostics.
     """
     masks = result.get("masks")
     scores = result.get("scores", [])
+    raw_instance_count = 0 if masks is None or masks.ndim != 3 else masks.shape[-1]
     rows = []
     instances = []
 
     if masks is None or masks.ndim != 3 or masks.shape[-1] == 0:
-        return pd.DataFrame(columns=METRIC_COLUMNS), instances
+        return pd.DataFrame(columns=METRIC_COLUMNS), instances, raw_instance_count
 
     for object_id in range(masks.shape[-1]):
         score = float(scores[object_id])
@@ -228,7 +272,7 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
             "contour": contour,
         })
 
-    return pd.DataFrame(rows, columns=METRIC_COLUMNS), instances
+    return pd.DataFrame(rows, columns=METRIC_COLUMNS), instances, raw_instance_count
 
 
 # --------------------------------------------------------------------------
@@ -427,7 +471,7 @@ def summarise(df, group_columns, metric_columns, include_replicate_count):
 # Main processing loop
 # --------------------------------------------------------------------------
 
-def process_images(args, model):
+def process_images(args, model, log):
     predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
     if args.save_images:
         os.makedirs(predicted_dir, exist_ok=True)
@@ -439,23 +483,35 @@ def process_images(args, model):
     if not image_files:
         sys.exit(f"Error: no supported images found in {args.input}")
 
+    total_images = len(image_files)
+    log.emit(f"Found {total_images} image(s) to process in {args.input}")
+    log.emit("-" * 78)
+
     tables = []
-    for filename in image_files:
+    skipped_files = []
+    parsing_failures = []
+    total_seeds_detected = 0
+    run_start = time.perf_counter()
+
+    for index, filename in enumerate(image_files, start=1):
+        image_start = time.perf_counter()
         image_path = os.path.join(args.input, filename)
         original_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
         if original_bgr is None:
-            print(f"Warning: could not read {image_path}; skipping.")
+            log.emit(f"[{index}/{total_images}] {filename}: could not read file; skipping.")
+            skipped_files.append(filename)
             continue
 
         image_bgr = crop_lateral_edges(original_bgr, args.edge_crop)
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
 
-        metrics, instances = detect_and_measure(
+        metrics, instances, raw_instance_count = detect_and_measure(
             result, filename, args.min_score, args.min_contour_points
         )
 
         replicate_by_object_id = {}
+        replicate_text = "sample/replicate: n/a"
         if not metrics.empty:
             try:
                 sample_id, replicate_ids = parse_sample_and_replicates(filename)
@@ -464,10 +520,13 @@ def process_images(args, model):
                 replicate_by_object_id = dict(
                     zip(metrics["object_id"], metrics["replicate_id"])
                 )
+                replicate_text = f"sample {sample_id!r}, {len(replicate_ids)} replicate(s)"
             except (ValueError, RuntimeError) as error:
-                print(f"Warning: {filename}: {error}. Leaving sample_id/replicate_id blank.")
+                log.emit(f"Warning: {filename}: {error}. Leaving sample_id/replicate_id blank.")
                 metrics["sample_id"] = pd.NA
                 metrics["replicate_id"] = pd.NA
+                parsing_failures.append(filename)
+                replicate_text = "replicate parsing FAILED"
             tables.append(metrics)
 
         if args.save_images:
@@ -477,9 +536,31 @@ def process_images(args, model):
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
             output_path = os.path.join(predicted_dir, output_name)
             if not cv2.imwrite(output_path, visualisation):
-                print(f"Warning: could not write {output_path}")
+                log.emit(f"Warning: could not write {output_path}")
 
-        print(f"{filename}: {len(instances)} objects detected")
+        elapsed = time.perf_counter() - image_start
+        total_seeds_detected += len(instances)
+
+        if instances:
+            scores = [instance["score"] for instance in instances]
+            score_text = f"mean score {np.mean(scores):.2f} (min {np.min(scores):.2f})"
+        else:
+            score_text = "no seeds retained"
+
+        avg_time_so_far = (time.perf_counter() - run_start) / index
+        remaining_images = total_images - index
+        eta_text = format_duration(avg_time_so_far * remaining_images) if remaining_images else "0.0s"
+        percent = 100 * index / total_images
+
+        height, width = image_bgr.shape[:2]
+        log.emit(
+            f"[{index}/{total_images}] ({percent:5.1f}%) {filename}: "
+            f"{width}x{height}px | raw {raw_instance_count} | retained {len(instances)} | "
+            f"{replicate_text} | {score_text} | {elapsed:.2f}s | ETA {eta_text}"
+        )
+
+    total_elapsed = time.perf_counter() - run_start
+    log.emit("-" * 78)
 
     if not tables:
         sys.exit("Error: no objects passed the selected score and contour filters. Nothing to save.")
@@ -496,37 +577,63 @@ def process_images(args, model):
 
     if args.dpi is not None:
         final_df = convert_to_millimetres(final_df, args.dpi)
-        print(f"Converted pixel measurements to millimetres using {args.dpi} DPI.")
+        log.emit(f"Converted pixel measurements to millimetres using {args.dpi} DPI.")
 
     seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
     final_df.to_csv(seed_path, sep="\t", index=False)
-    print(f"Per-seed table saved to {seed_path}")
+    log.emit(f"Per-seed table saved to {seed_path}")
 
     labelled_df = final_df.dropna(subset=["sample_id", "replicate_id"])
+    replicates_created = False
     if labelled_df.empty:
-        print("Warning: no rows had a valid sample_id/replicate_id; summary tables were not created.")
-        return
+        log.emit("Warning: no rows had a valid sample_id/replicate_id; summary tables were not created.")
+    else:
+        metric_columns = shape_metric_columns_for(args.dpi)
 
-    metric_columns = shape_metric_columns_for(args.dpi)
+        replicates_summary = summarise(
+            labelled_df, group_columns=["sample_id", "replicate_id"],
+            metric_columns=metric_columns, include_replicate_count=False,
+        )
+        replicates_path = os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME)
+        replicates_summary.to_csv(replicates_path, sep="\t", index=False)
+        log.emit(f"Replicate summary saved to {replicates_path}")
 
-    replicates_summary = summarise(
-        labelled_df, group_columns=["sample_id", "replicate_id"],
-        metric_columns=metric_columns, include_replicate_count=False,
-    )
-    replicates_path = os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME)
-    replicates_summary.to_csv(replicates_path, sep="\t", index=False)
-    print(f"Replicate summary saved to {replicates_path}")
-
-    samples_summary = summarise(
-        labelled_df, group_columns=["sample_id"],
-        metric_columns=metric_columns, include_replicate_count=True,
-    )
-    samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
-    samples_summary.to_csv(samples_path, sep="\t", index=False)
-    print(f"Sample summary saved to {samples_path}")
+        samples_summary = summarise(
+            labelled_df, group_columns=["sample_id"],
+            metric_columns=metric_columns, include_replicate_count=True,
+        )
+        samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
+        samples_summary.to_csv(samples_path, sep="\t", index=False)
+        log.emit(f"Sample summary saved to {samples_path}")
+        replicates_created = True
 
     if args.save_images:
-        print(f"Prediction overlays saved in {predicted_dir}")
+        log.emit(f"Prediction overlays saved in {predicted_dir}")
+
+    images_processed = total_images - len(skipped_files)
+    avg_per_image = total_elapsed / images_processed if images_processed else 0.0
+    throughput = (images_processed / total_elapsed * 60) if total_elapsed > 0 else 0.0
+    unique_samples = final_df["sample_id"].nunique(dropna=True)
+    unique_replicates = (
+        final_df.dropna(subset=["sample_id", "replicate_id"])
+        .drop_duplicates(subset=["sample_id", "replicate_id"])
+        .shape[0]
+    )
+
+    log.emit("")
+    log.emit("Run summary")
+    log.emit(f"  Images processed:      {images_processed}/{total_images}")
+    log.emit(f"  Images skipped (I/O):  {len(skipped_files)}"
+              + (f" ({', '.join(skipped_files)})" if skipped_files else ""))
+    log.emit(f"  Replicate parse fails: {len(parsing_failures)}"
+              + (f" ({', '.join(parsing_failures)})" if parsing_failures else ""))
+    log.emit(f"  Total seeds kept:      {total_seeds_detected}")
+    log.emit(f"  Distinct samples:      {unique_samples}")
+    log.emit(f"  Distinct replicates:   {unique_replicates}")
+    log.emit(f"  Summary tables built:  {replicates_created}")
+    log.emit(f"  Total run time:        {format_duration(total_elapsed)}")
+    log.emit(f"  Avg time/image:        {avg_per_image:.2f}s")
+    log.emit(f"  Throughput:            {throughput:.1f} images/min")
 
 
 def main():
@@ -582,12 +689,31 @@ def main():
         if response.lower() != "y":
             sys.exit("Process aborted by user.")
 
+    log = RunLog()
+    log.emit(f"Run started: {datetime.now().isoformat(timespec='seconds')}")
+    log.emit(f"Input directory:      {args.input}")
+    log.emit(f"Output directory:     {args.output_dir}")
+    log.emit(f"Weights:              {args.weights}")
+    log.emit(f"Edge crop:            {args.edge_crop}")
+    log.emit(f"Min score:            {args.min_score}")
+    log.emit(f"Min contour points:   {args.min_contour_points}")
+    log.emit(f"Max instances:        {args.max_instances}")
+    log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
+    log.emit(f"Save overlays:        {args.save_images}")
+    log.emit("=" * 78)
+
     config = InferenceConfig()
     config.DETECTION_MAX_INSTANCES = args.max_instances
     model = modellib.MaskRCNN(mode="inference", config=config, model_dir="")
-    print(f"Loading weights from {args.weights}")
+    log.emit(f"Loading weights from {args.weights}")
     model.load_weights(args.weights, by_name=True)
-    process_images(args, model)
+
+    process_images(args, model, log)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    log_path = os.path.join(args.output_dir, RUN_LOG_FILENAME)
+    log.write(log_path)
+    print(f"Run log saved to {log_path}")
 
 
 if __name__ == "__main__":
