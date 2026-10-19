@@ -1,0 +1,37 @@
+# Example run configuration for grain_metrics_and_visualize.py.
+#
+#   python grain_metrics_and_visualize.py --config my_config.yaml
+#
+# Every key is optional except input and output_dir (which may also be given
+# as -i / -o). Flags given on the command line override values from this file,
+# e.g. `--config my_config.yaml --mask-threshold 0.3` or `--no-save-images`.
+# The resolved parameters of each run are saved to <output_dir>/config_used.yaml.
+# Relative paths are resolved against the directory you run the script from
+# (the repository root), not against the location of this file.
+
+input: images
+output_dir: output_dir
+
+# Split each image's seeds into plant replicates (plants laid out vertically,
+# file names <sample_id>_<r1-r2-...>.ext).
+replicates: false
+
+preprocessing:
+  # Fraction of the image width (left/right) or height (top/bottom) to remove.
+  crop:
+    left: 0.0
+    right: 0.0
+    top: 0.0
+    bottom: 0.0
+
+model:
+  weights: data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5
+  min_score: 0.95          # minimum detection confidence
+  min_contour_points: 100  # minimum contour point count
+  mask_threshold: 0.1      # soft-mask binarisation threshold (0.5 = original Mask R-CNN)
+  max_instances: 400       # maximum detections per image
+
+output:
+  dpi: null                # scan resolution; set (e.g. 500) to report millimetres
+  save_images: false       # also save prediction overlays
+  alpha: 0.35              # overlay opacity

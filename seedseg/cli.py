@@ -5,10 +5,13 @@ import os
 import sys
 from datetime import datetime
 
+import yaml
+
 from .columns import (
-    PREDICTED_MASKS_DIRNAME, REPLICATES_SUMMARY_FILENAME, RUN_LOG_FILENAME,
-    SAMPLES_SUMMARY_FILENAME, SEED_PARAMETERS_FILENAME,
+    CONFIG_USED_FILENAME, PREDICTED_MASKS_DIRNAME, REPLICATES_SUMMARY_FILENAME,
+    RUN_LOG_FILENAME, SAMPLES_SUMMARY_FILENAME, SEED_PARAMETERS_FILENAME,
 )
+from .config import ConfigError, load_config, save_config
 from .runlog import RunLog
 
 
@@ -16,19 +19,25 @@ def build_parser(description):
     parser = argparse.ArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("-i", "--input", required=True, help="Directory containing input images")
-    parser.add_argument("-o", "--output-dir", required=True,
-                        help="Root output directory for all generated tables and images")
+    parser.add_argument("-c", "--config",
+                        help=(
+                            "YAML config file (see config.example.yaml). Flags given on "
+                            "the command line override values from the file."
+                        ))
+    # -i/-o are required, but may come from the config file, so they're checked after parsing.
+    parser.add_argument("-i", "--input", help="Directory containing input images (required)")
+    parser.add_argument("-o", "--output-dir",
+                        help="Root output directory for all generated tables and images (required)")
     parser.add_argument("-w", "--weights",
                         default="data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5",
                         help="Mask R-CNN weights path")
-    parser.add_argument("-r", "--replicates", action="store_true",
+    parser.add_argument("-r", "--replicates", action=argparse.BooleanOptionalAction, default=False,
                         help=(
                             "Split the seeds of each image into plant replicates using the "
                             "file name (<sample_id>_<r1-r2-...>) and the vertical gaps between "
                             "plants; also writes replicates_summary.tsv"
                         ))
-    parser.add_argument("--save-images", action="store_true",
+    parser.add_argument("--save-images", action=argparse.BooleanOptionalAction, default=False,
                         help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
     parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
                         help="Fraction of the image width removed from the left edge (default: 0.0)")
@@ -60,6 +69,23 @@ def build_parser(description):
                             "from the output. Default: None (report pixels)."
                         ))
     return parser
+
+
+def parse_args(description):
+    """Parse flags, layering them over the config file (if any) over the defaults."""
+    parser = build_parser(description)
+    pre_args, _ = parser.parse_known_args()
+    if pre_args.config:
+        try:
+            parser.set_defaults(**load_config(pre_args.config))
+        except (OSError, ConfigError, yaml.YAMLError) as error:
+            parser.error(f"could not load config: {error}")
+    args = parser.parse_args()
+    if args.input is None:
+        parser.error("the input directory is required (-i/--input or 'input' in the config)")
+    if args.output_dir is None:
+        parser.error("the output directory is required (-o/--output-dir or 'output_dir' in the config)")
+    return args
 
 
 def validate_args(args):
@@ -107,6 +133,7 @@ def confirm_overwrite(args):
 
 def log_parameters(args, log):
     log.emit(f"Run started:          {datetime.now().isoformat(timespec='seconds')}")
+    log.emit(f"Config file:          {args.config or 'none'}")
     log.emit(f"Input directory:      {args.input}")
     log.emit(f"Output directory:     {args.output_dir}")
     log.emit(f"Weights:              {args.weights}")
@@ -122,12 +149,16 @@ def log_parameters(args, log):
 
 
 def main(description=None):
-    args = build_parser(description).parse_args()
+    args = parse_args(description)
     validate_args(args)
     confirm_overwrite(args)
 
     log = RunLog()
     log_parameters(args, log)
+    os.makedirs(args.output_dir, exist_ok=True)
+    config_path = os.path.join(args.output_dir, CONFIG_USED_FILENAME)
+    save_config(args, config_path)
+    log.emit(f"Resolved parameters saved to {config_path}")
 
     try:
         # Imported here so that --help and argument errors don't wait for TensorFlow.

@@ -70,6 +70,16 @@ python grain_metrics_and_visualize.py -i images -o output_dir --replicates [--sa
 
 Supported input formats: TIF, TIFF, PNG, JPEG.
 
+All parameters can also be kept in a YAML config file — copy [`config.example.yaml`](./config.example.yaml) and pass
+it with `-c / --config`. Flags given on the command line override values from the file (boolean options can be
+switched off with `--no-replicates` / `--no-save-images`), and the resolved parameters of every run are saved to
+`<output-dir>/config_used.yaml`, so any run can be reproduced with `--config <output-dir>/config_used.yaml`.
+
+```
+python grain_metrics_and_visualize.py --config my_config.yaml
+python grain_metrics_and_visualize.py --config my_config.yaml --mask-threshold 0.3 -o other_output
+```
+
 The script is a thin entry point; the pipeline itself lives in the [`seedseg/`](./seedseg) package (preprocessing,
 measurement, replicate assignment, unit conversion, summaries, overlays). Only `seedseg/model.py` imports TensorFlow.
 
@@ -77,8 +87,9 @@ Key flags (run the script with `-h` for the full list):
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-i / --input` | required | Directory of input images |
-| `-o / --output-dir` | required | Root directory for all outputs |
+| `-c / --config` | none | YAML config file; command-line flags override it |
+| `-i / --input` | required | Directory of input images (flag or config) |
+| `-o / --output-dir` | required | Root directory for all outputs (flag or config) |
 | `-w / --weights` | `data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5` | Mask R-CNN weights path |
 | `-r / --replicates` | off | Split each image's seeds into plant replicates |
 | `--save-images` | off | Also save prediction overlays |
@@ -130,6 +141,7 @@ Everything is written under the given `--output-dir`:
     samples_summary.tsv     summary stats (mean/sd/min/max/median) per accession or sample_id
     replicates_summary.tsv  summary stats per (sample_id, replicate_id) -- --replicates only
     run_log.txt             run parameters and a per-run summary
+    config_used.yaml        resolved parameters of the run (reusable with --config)
     predicted_masks/        overlay PNGs, only created if --save-images is passed
 ```
 

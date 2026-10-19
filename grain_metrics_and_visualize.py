@@ -43,12 +43,21 @@ Output structure
         samples_summary.tsv      summary stats per file_name (or sample_id with --replicates)
         replicates_summary.tsv   summary stats per (sample_id, replicate_id), --replicates only
         run_log.txt              run parameters and a per-run summary
+        config_used.yaml         resolved parameters (reusable with --config)
         predicted_masks/         only created if --save-images is passed
+
+Config file
+-----------
+All parameters can be kept in a YAML file passed with --config (see
+config.example.yaml). Flags given on the command line override the file.
 
 Examples
 --------
     # Tables only, pixels
     python grain_metrics_and_visualize.py -i images -o output_dir
+
+    # All parameters from a config file, overriding one of them
+    python grain_metrics_and_visualize.py --config my_config.yaml --mask-threshold 0.3
 
     # Per-plant replicates, overlays, millimetres (500 DPI scan)
     python grain_metrics_and_visualize.py -i images -o output_dir --replicates \\
