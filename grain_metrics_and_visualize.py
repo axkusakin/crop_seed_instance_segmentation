@@ -505,16 +505,13 @@ def main():
                         help="Mask R-CNN weights path")
     parser.add_argument("--save-images", action="store_true",
                         help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
-    parser.add_argument("--edge-crop", type=float, default=0.0,
-                        help="Shorthand: fraction removed from both left and right edges "
-                             "(default: 0.0). Overridden by --crop-left/--crop-right")
-    parser.add_argument("--crop-left", type=float, default=None,
-                        help="Fraction of the image width removed from the left edge")
-    parser.add_argument("--crop-right", type=float, default=None,
-                        help="Fraction of the image width removed from the right edge")
-    parser.add_argument("--crop-top", type=float, default=0.0,
+    parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
+                        help="Fraction of the image width removed from the left edge (default: 0.0)")
+    parser.add_argument("-cr", "--crop-right", type=float, default=0.0,
+                        help="Fraction of the image width removed from the right edge (default: 0.0)")
+    parser.add_argument("-ct", "--crop-top", type=float, default=0.0,
                         help="Fraction of the image height removed from the top edge (default: 0.0)")
-    parser.add_argument("--crop-bottom", type=float, default=0.0,
+    parser.add_argument("-cb", "--crop-bottom", type=float, default=0.0,
                         help="Fraction of the image height removed from the bottom edge (default: 0.0)")
     parser.add_argument("--min-score", type=float, default=0.95,
                         help="Minimum detection score (default: 0.95)")
@@ -543,12 +540,6 @@ def main():
         sys.exit(f"Error: input directory does not exist: {args.input}")
     if not os.path.isfile(args.weights):
         sys.exit(f"Error: weights file does not exist: {args.weights}")
-    if not 0.0 <= args.edge_crop < 0.5:
-        sys.exit("Error: --edge-crop must be at least 0 and less than 0.5.")
-    if args.crop_left is None:
-        args.crop_left = args.edge_crop
-    if args.crop_right is None:
-        args.crop_right = args.edge_crop
     for flag, value in (("--crop-left", args.crop_left), ("--crop-right", args.crop_right),
                         ("--crop-top", args.crop_top), ("--crop-bottom", args.crop_bottom)):
         if not 0.0 <= value < 1.0:
