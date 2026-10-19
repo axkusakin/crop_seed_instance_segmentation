@@ -20,27 +20,35 @@ _mm2) plus the dimensionless ratios (LWR, eccentricity, solidity,
 circularity) -- pixel columns are dropped from the output. Without --dpi, the
 table keeps the original pixel-based column names.
 
+Mask threshold
+--------------
+Mask R-CNN predicts a soft (0-1) mask for every detected seed, which
+mrcnn.utils.unmold_mask binarises at a fixed 0.5. --mask-threshold overrides
+that value: lower values (e.g. 0.3-0.4) move the mask border outwards, higher
+values move it inwards. The default 0.5 reproduces the original behaviour.
+The mask can never extend beyond the detection box, whatever the threshold.
+
 Output structure
 -----------------
 Everything is written under a single --output-dir:
 
     <output-dir>/
-        seed_parameters.tsv    one row per detected seed
-        samples_summary.tsv    summary stats per accession (file_name)
-        run_log.txt            run parameters and a per-run summary
-        predicted_masks/       only created if --save-images is passed
+        seed_parameters.tsv     one row per detected seed
+        samples_summary.tsv     summary stats per accession (file_name)
+        run_log.txt             run parameters and a per-run summary
+        predicted_masks/        only created if --save-images is passed
 
 Examples
 --------
-# Pixels only
-python grain_metrics_no_iqr.py -i images -o output_dir
+    # Pixels only
+    python grain_metrics_and_visualize.py -i images -o output_dir
 
-# Convert to millimetres, assuming a 500 DPI scan
-python grain_metrics_no_iqr.py -i images -o output_dir --dpi 500
+    # Convert to millimetres, assuming a 500 DPI scan
+    python grain_metrics_and_visualize.py -i images -o output_dir --dpi 500
 
-# Tables plus overlays, cropped edges, millimetre output
-python grain_metrics_no_iqr.py -i images -o output_dir --save-images \
-    --edge-crop 0.08 --dpi 500
+    # Wider masks (threshold 0.35), tables plus overlays, millimetre output
+    python grain_metrics_and_visualize.py -i images -o output_dir --save-images \
+        --mask-threshold 0.35 --dpi 500
 """
 
 import argparse
@@ -58,13 +66,14 @@ os.environ["GRPC_VERBOSITY"] = "ERROR"
 os.environ["GLOG_minloglevel"] = "2"
 
 import tensorflow as tf
-tf.get_logger().setLevel("ERROR")
 
+tf.get_logger().setLevel("ERROR")
 # Disable the Grappler cost-based optimizations that trigger the CropAndResize warning.
 tf.config.optimizer.set_experimental_options({"disable_meta_optimizer": True})
 
 try:
     import mrcnn.model as modellib
+    from mrcnn import utils as mrcnn_utils
     from mrcnn.config import Config
 except ImportError:
     sys.exit("Error: Mask R-CNN library not found. Run this script from the repository root.")
@@ -77,6 +86,7 @@ class InferenceConfig(Config):
     NUM_CLASSES = 2  # background + seed
     IMAGE_MIN_DIM = 512
     IMAGE_MAX_DIM = 8192
+    IMAGE_RESIZE_MODE = "pad64"  # as in the original Mask_RCNN.ipynb
     DETECTION_MIN_CONFIDENCE = 0.0
     RPN_NMS_THRESHOLD = 0.4
 
@@ -92,7 +102,6 @@ COLUMNS = [
 # length-like columns scale linearly (^1), area-like columns scale by area (^2).
 LENGTH_COLUMNS = ["L_seed_length", "W_seed_width", "PL_perimeter_length"]
 AREA_COLUMNS = ["AS_seed_area"]
-
 # Dimensionless columns: never converted, never renamed.
 RATIO_COLUMNS = [
     "LWR_length_to_width_ratio", "eccentricity", "solidity", "CS_seed_circularity",
@@ -103,6 +112,33 @@ PREDICTED_MASKS_DIRNAME = "predicted_masks"
 SEED_PARAMETERS_FILENAME = "seed_parameters.tsv"
 SAMPLES_SUMMARY_FILENAME = "samples_summary.tsv"
 RUN_LOG_FILENAME = "run_log.txt"
+
+
+# --------------------------------------------------------------------------
+# Mask threshold
+# --------------------------------------------------------------------------
+
+def install_mask_threshold(threshold):
+    """Make model.detect() binarise soft masks at `threshold` instead of 0.5.
+
+    mrcnn.model.MaskRCNN.unmold_detections() calls utils.unmold_mask(), looking
+    the function up on the mrcnn.utils module at call time. Replacing that
+    module attribute changes the threshold without editing the vendored
+    library. The replacement is identical to the original except for the
+    threshold value.
+    """
+    if not hasattr(mrcnn_utils, "unmold_mask") or not hasattr(mrcnn_utils, "resize"):
+        sys.exit("Error: mrcnn.utils has no unmold_mask/resize; cannot set the mask threshold.")
+
+    def unmold_mask(mask, bbox, image_shape):
+        y1, x1, y2, x2 = bbox
+        mask = mrcnn_utils.resize(mask, (y2 - y1, x2 - x1))
+        mask = mask >= threshold
+        full_mask = np.zeros(image_shape[:2], dtype=bool)
+        full_mask[y1:y2, x1:x2] = mask
+        return full_mask
+
+    mrcnn_utils.unmold_mask = unmold_mask
 
 
 # --------------------------------------------------------------------------
@@ -119,6 +155,18 @@ def format_duration(seconds):
         return f"{hours}h {minutes:02d}m {secs:02d}s"
     return f"{minutes}m {secs:02d}s"
 
+    def emit(self, message=""):
+        print(message)
+        self.lines.append(message)
+
+    def write(self, path):
+        with open(path, "w") as handle:
+            handle.write("\n".join(self.lines) + "\n")
+
+
+# --------------------------------------------------------------------------
+# Detection helpers
+# --------------------------------------------------------------------------
 
 class RunLog:
     """Collects console-style lines and writes them to a run_log.txt at the end."""
@@ -166,6 +214,7 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
     masks = result.get("masks")
     scores = result.get("scores", [])
     raw_instance_count = 0 if masks is None or masks.ndim != 3 else masks.shape[-1]
+
     rows = []
     instances = []
 
@@ -196,8 +245,8 @@ def detect_and_measure(result, image_name, min_score, min_contour_points):
         major_axis, minor_axis = max(ellipse[1]), min(ellipse[1])
         if major_axis <= 0:
             continue
-        eccentricity = np.sqrt(1 - (minor_axis / major_axis) ** 2)
 
+        eccentricity = np.sqrt(1 - (minor_axis / major_axis) ** 2)
         hull_area = cv2.contourArea(cv2.convexHull(contour))
         perimeter = cv2.arcLength(contour, True)
         if hull_area <= 0 or perimeter <= 0:
@@ -276,11 +325,12 @@ def convert_to_millimetres(df, dpi):
     """
     mm_per_pixel = 25.4 / dpi
     converted = df.copy()
-
     rename_map = {}
+
     for column in LENGTH_COLUMNS:
         converted[column] = converted[column] * mm_per_pixel
         rename_map[column] = f"{column}_mm"
+
     for column in AREA_COLUMNS:
         converted[column] = converted[column] * (mm_per_pixel ** 2)
         rename_map[column] = f"{column}_mm2"
@@ -354,10 +404,10 @@ def process_images(args, model, log):
         image_bgr = crop_lateral_edges(original_bgr, args.edge_crop)
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
-
         metrics, instances, raw_instance_count = detect_and_measure(
             result, filename, args.min_score, args.min_contour_points
         )
+
         if not metrics.empty:
             tables.append(metrics)
 
@@ -381,8 +431,8 @@ def process_images(args, model, log):
         remaining_images = total_images - index
         eta_text = format_duration(avg_time_so_far * remaining_images) if remaining_images else "0.0s"
         percent = 100 * index / total_images
-
         height, width = image_bgr.shape[:2]
+
         log.emit(
             f"[{index}/{total_images}] ({percent:5.1f}%) {filename}: "
             f"{width}x{height}px | raw detections {raw_instance_count} | "
@@ -426,13 +476,13 @@ def process_images(args, model, log):
 
     log.emit("")
     log.emit("Run summary")
-    log.emit(f"  Images processed:   {images_processed}/{total_images}")
-    log.emit(f"  Images skipped:     {len(skipped_files)}"
-              + (f" ({', '.join(skipped_files)})" if skipped_files else ""))
-    log.emit(f"  Total seeds kept:   {total_seeds_detected}")
-    log.emit(f"  Total run time:     {format_duration(total_elapsed)}")
-    log.emit(f"  Avg time/image:     {avg_per_image:.2f}s")
-    log.emit(f"  Throughput:         {throughput:.1f} images/min")
+    log.emit(f"  Images processed:  {images_processed}/{total_images}")
+    log.emit(f"  Images skipped:    {len(skipped_files)}"
+             + (f" ({', '.join(skipped_files)})" if skipped_files else ""))
+    log.emit(f"  Total seeds kept:  {total_seeds_detected}")
+    log.emit(f"  Total run time:    {format_duration(total_elapsed)}")
+    log.emit(f"  Avg time/image:    {avg_per_image:.2f}s")
+    log.emit(f"  Throughput:        {throughput:.1f} images/min")
 
 
 def main():
@@ -453,10 +503,16 @@ def main():
                         help="Minimum detection score (default: 0.95)")
     parser.add_argument("--min-contour-points", type=int, default=100,
                         help="Minimum contour point count (default: 100)")
+    parser.add_argument("--mask-threshold", type=float, default=0.5,
+                        help=(
+                            "Probability threshold used to binarise each soft mask. "
+                            "Lower values (e.g. 0.3-0.4) widen the masks; 0.5 is the "
+                            "original Mask R-CNN behaviour (default: 0.5)."
+                        ))
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
-    parser.add_argument("--max-instances", type=int, default=400,
-                        help="Maximum final Mask R-CNN detections per image (default: 400)")
+    parser.add_argument("--max-instances", type=int, default=1000,
+                        help="Maximum final Mask R-CNN detections per image (default: 1000)")
     parser.add_argument("--dpi", type=float, default=None,
                         help=(
                             "Scan resolution in dots per inch. When set, converts all "
@@ -472,6 +528,8 @@ def main():
         sys.exit(f"Error: weights file does not exist: {args.weights}")
     if not 0.0 <= args.edge_crop < 0.5:
         sys.exit("Error: --edge-crop must be at least 0 and less than 0.5.")
+    if not 0.0 < args.mask_threshold < 1.0:
+        sys.exit("Error: --mask-threshold must be greater than 0 and less than 1.")
     if not 0.0 <= args.alpha <= 1.0:
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
@@ -486,17 +544,20 @@ def main():
             sys.exit("Process aborted by user.")
 
     log = RunLog()
-    log.emit(f"Run started: {datetime.now().isoformat(timespec='seconds')}")
+    log.emit(f"Run started:          {datetime.now().isoformat(timespec='seconds')}")
     log.emit(f"Input directory:      {args.input}")
     log.emit(f"Output directory:     {args.output_dir}")
     log.emit(f"Weights:              {args.weights}")
     log.emit(f"Edge crop:            {args.edge_crop}")
     log.emit(f"Min score:            {args.min_score}")
     log.emit(f"Min contour points:   {args.min_contour_points}")
+    log.emit(f"Mask threshold:       {args.mask_threshold}")
     log.emit(f"Max instances:        {args.max_instances}")
     log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)
+
+    install_mask_threshold(args.mask_threshold)
 
     config = InferenceConfig()
     config.DETECTION_MAX_INSTANCES = args.max_instances
