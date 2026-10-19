@@ -112,6 +112,10 @@ replicate numbers:
 | `MyCollection_022_5-4-8.jpg` | `MyCollection_022` | `[5, 4, 8]` |
 | `MyCollection_007_4.jpg` | `MyCollection_007` | `[4]` (single plant) |
 
+**Lay the plants out vertically.** The seeds of each plant must form a separate group, with the groups placed one
+above another and separated by an empty gap. The groups are matched to the replicate numbers from top to bottom:
+in `..._5-4-8.jpg` the top group is replicate 5, the middle one 4 and the bottom one 8.
+
 A file that doesn't match this pattern still contributes to `seed_parameters.tsv`, but with `sample_id`/
 `replicate_id` left blank and a warning in `run_log.txt`; it's excluded from the replicate/sample summary tables.
 

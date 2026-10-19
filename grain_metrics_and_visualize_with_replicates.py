@@ -19,16 +19,14 @@ replicate_id = one of the dash-separated numbers in that trailing token.
 
 Replicate assignment
 ---------------------
-Each image may contain 1-3 plant replicates spread with an empty gap between
-them. For images with more than one replicate ID, seed centroids (always
+Each image may contain 1-3 plant replicates laid out vertically (one above
+another) with an empty gap between them. For images with more than one replicate ID, seed centroids (always
 computed and clustered in pixel space, regardless of --dpi) are connected
 into a minimum spanning tree (MST); removing the (k - 1) longest edges from
 any spanning tree always yields exactly k connected components, so this
-deterministically splits the seeds into k spatial groups regardless of
-whether the gap runs horizontally, vertically, or diagonally. Groups are
-then ordered along the principal spread axis of the centroids (via PCA) and
-matched, in that order, to the replicate IDs as listed in the file name --
-the sequence in which the plants were physically laid on the imaging bed.
+deterministically splits the seeds into k spatial groups. Groups are then
+ordered top to bottom by their mean centroid y and matched, in that order,
+to the replicate IDs as listed in the file name.
 
 Units
 -----
@@ -345,19 +343,11 @@ def parse_sample_and_replicates(file_name):
 # Replicate assignment (spatial gap clustering, always in pixel space)
 # --------------------------------------------------------------------------
 
-def principal_axis_order(labels, centroids):
-    """Order cluster labels along the first principal component of centroids."""
-    centered = centroids - centroids.mean(axis=0)
-    covariance = np.cov(centered, rowvar=False)
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    principal_axis = eigenvectors[:, np.argmax(eigenvalues)]
-    projections = centered @ principal_axis
-
+def top_to_bottom_order(labels, centroids):
+    """Order cluster labels top to bottom by the mean y of their centroids."""
     unique_labels = np.unique(labels)
-    mean_projection = {
-        label: projections[labels == label].mean() for label in unique_labels
-    }
-    return sorted(unique_labels, key=lambda label: mean_projection[label])
+    mean_y = {label: centroids[labels == label, 1].mean() for label in unique_labels}
+    return sorted(unique_labels, key=lambda label: mean_y[label])
 
 
 def split_into_groups(centroids, num_groups):
@@ -409,7 +399,7 @@ def assign_replicates(metrics_df, replicate_ids):
 
     centroids = metrics_df[["centroid_x", "centroid_y"]].to_numpy(dtype=float)
     labels = split_into_groups(centroids, num_replicates)
-    ordered_labels = principal_axis_order(labels, centroids)
+    ordered_labels = top_to_bottom_order(labels, centroids)
 
     label_to_replicate = {
         label: replicate_id
