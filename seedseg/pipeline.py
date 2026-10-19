@@ -13,7 +13,7 @@ from .columns import (
     SEED_PARAMETERS_FILENAME,
 )
 from .measure import measure_instances
-from .preprocess import crop_edges
+from .preprocess import geometric_preprocess, photometric_preprocess
 from .replicates import assign_replicates, parse_sample_and_replicates
 from .runlog import format_duration
 from .summary import summarise
@@ -102,9 +102,10 @@ def process_images(args, model, log):
             skipped_files.append(filename)
             continue
 
-        image_bgr = crop_edges(original_bgr, args.crop_left, args.crop_right,
-                               args.crop_top, args.crop_bottom)
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        # Overlays are drawn on image_bgr; contrast/blur only change the model input.
+        image_bgr = geometric_preprocess(original_bgr, args)
+        model_input_bgr = photometric_preprocess(image_bgr, args)
+        image_rgb = cv2.cvtColor(model_input_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
         metrics, instances, raw_instance_count = measure_instances(
             result, filename, args.min_score, args.min_contour_points

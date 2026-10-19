@@ -16,13 +16,26 @@ output_dir: output_dir
 # file names <sample_id>_<r1-r2-...>.ext).
 replicates: false
 
+# Applied in this order: flip -> crop -> contrast -> blur. Flip and crop change
+# the image the overlays are drawn on; contrast and blur only change what the
+# model sees. Validate contrast/blur against reference masks before relying on
+# them: the model was trained on unprocessed scans.
 preprocessing:
-  # Fraction of the image width (left/right) or height (top/bottom) to remove.
+  flip: none               # none | horizontal | vertical (e.g. mirrored scanner output)
+  # Fraction of the image width (left/right) or height (top/bottom) to remove,
+  # measured on the flipped image.
   crop:
     left: 0.0
     right: 0.0
     top: 0.0
     bottom: 0.0
+  contrast:                # CLAHE on the lightness channel; colours unchanged
+    enabled: false
+    clip_limit: 2.0        # higher = stronger contrast
+    tile_size: 8           # image split into tile_size x tile_size tiles
+  blur:                    # Gaussian smoothing
+    enabled: false
+    kernel_size: 3         # odd, in pixels
 
 model:
   weights: data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5

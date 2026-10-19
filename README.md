@@ -94,8 +94,11 @@ Key flags (run the script with `-h` for the full list):
 | `-r / --replicates` | off | Split each image's seeds into plant replicates |
 | `--save-images` / `--no-save-images` | on | Save prediction overlays |
 | `--dpi` | none (pixels) | Scan resolution; converts length/area columns to millimetres |
+| `--flip` | `none` | Mirror the image first: `horizontal`, `vertical` or `none` |
 | `-cl / --crop-left`, `-cr / --crop-right` | `0.0` | Fraction of the image width trimmed from that side (e.g. scanner artifacts) |
 | `-ct / --crop-top`, `-cb / --crop-bottom` | `0.0` | Fraction of the image height trimmed from that side |
+| `--contrast` | off | CLAHE contrast enhancement of the model input (`--clahe-clip-limit 2.0`, `--clahe-tile-size 8`) |
+| `--blur` | off | Gaussian smoothing of the model input (`--blur-kernel 3`) |
 | `--min-score` | `0.95` | Minimum detection confidence kept in the output table |
 | `--min-contour-points` | `100` | Minimum contour point count kept in the output table |
 | `--mask-threshold` | `0.1` | Probability threshold for binarising soft masks; lower values widen the masks (`0.5` = original Mask R-CNN behaviour) |
@@ -104,6 +107,19 @@ Key flags (run the script with `-h` for the full list):
 
 No IQR or other outlier filtering is applied — every detection that passes `--min-score` and `--min-contour-points`
 is written to the table.
+
+### Preprocessing
+
+Each image goes through these optional steps before inference, in this order:
+
+1. **Flip** (`--flip horizontal|vertical`) — undo mirrored scanner output. Off by default.
+2. **Crop** (`-cl/-cr/-ct/-cb`) — trim edge artifacts. Sides refer to the already flipped image.
+3. **Contrast** (`--contrast`) — CLAHE on the lightness channel in LAB colour space, so colours are preserved.
+4. **Blur** (`--blur`) — Gaussian smoothing.
+
+Flip and crop change the image the overlays are drawn on, so all coordinates refer to the corrected image. Contrast
+and blur are applied to the model input only — overlays show the original colours. The model was trained on
+unprocessed scans, so check contrast/blur against reference masks before relying on them.
 
 ### Units
 

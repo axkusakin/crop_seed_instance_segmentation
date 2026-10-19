@@ -13,8 +13,8 @@
   pinned dependency, but EFD computation isn't wired into either script yet — `multivariate_analysis.ipynb` only
   loads *precomputed* EFD coefficients from a CSV folder that doesn't exist in this repo. New descriptors should hook
   into `seedseg/measure.py:measure_instances`, using the contour/hull/ellipse already computed there per instance.
-- [ ] **More preprocessing steps**: contrast enhancement, grayscale conversion, smoothing — alongside/before the
-  existing `crop_edges` step in `seedseg/preprocess.py`.
+- [ ] **More preprocessing steps**: flip, CLAHE contrast and Gaussian blur are in `seedseg/preprocess.py`;
+  grayscale conversion is still open. Contrast/blur settings still need validating against reference masks.
 - [ ] **Defective-grain detection**: either a post-hoc heuristic computed from the existing mask/contour/metrics, or
   retraining Mask R-CNN with a third ("defective") class. The training path (`.compile()`/`.train()`) is currently
   unverified and should be assumed broken until someone exercises it (see `mrcnn/PATCHES.md`).

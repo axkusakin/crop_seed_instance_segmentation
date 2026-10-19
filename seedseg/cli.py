@@ -12,6 +12,7 @@ from .columns import (
     RUN_LOG_FILENAME, SAMPLES_SUMMARY_FILENAME, SEED_PARAMETERS_FILENAME,
 )
 from .config import ConfigError, load_config, save_config
+from .preprocess import FLIP_MODES
 from .runlog import RunLog
 
 
@@ -42,6 +43,21 @@ def build_parser(description):
                             f"Save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME} "
                             "(default: on; --no-save-images to skip)"
                         ))
+    parser.add_argument("--flip", choices=FLIP_MODES, default="none",
+                        help=(
+                            "Mirror the image before anything else: 'horizontal' (left-right), "
+                            "'vertical' (top-bottom) or 'none' (default: none)"
+                        ))
+    parser.add_argument("--contrast", action=argparse.BooleanOptionalAction, default=False,
+                        help="Enhance contrast of the model input with CLAHE on the lightness channel (default: off)")
+    parser.add_argument("--clahe-clip-limit", type=float, default=2.0,
+                        help="CLAHE clip limit; higher values give stronger contrast (default: 2.0)")
+    parser.add_argument("--clahe-tile-size", type=int, default=8,
+                        help="CLAHE grid size: the image is split into N x N tiles (default: 8)")
+    parser.add_argument("--blur", action=argparse.BooleanOptionalAction, default=False,
+                        help="Smooth the model input with a Gaussian blur (default: off)")
+    parser.add_argument("--blur-kernel", type=int, default=3,
+                        help="Gaussian kernel size in pixels, odd (default: 3)")
     parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
                         help="Fraction of the image width removed from the left edge (default: 0.0)")
     parser.add_argument("-cr", "--crop-right", type=float, default=0.0,
@@ -104,6 +120,14 @@ def validate_args(args):
         sys.exit("Error: --crop-left and --crop-right together must be less than 1.")
     if args.crop_top + args.crop_bottom >= 1.0:
         sys.exit("Error: --crop-top and --crop-bottom together must be less than 1.")
+    if args.flip not in FLIP_MODES:
+        sys.exit(f"Error: --flip must be one of {', '.join(FLIP_MODES)}.")
+    if args.clahe_clip_limit <= 0:
+        sys.exit("Error: --clahe-clip-limit must be a positive number.")
+    if args.clahe_tile_size < 1:
+        sys.exit("Error: --clahe-tile-size must be at least 1.")
+    if args.blur_kernel < 3 or args.blur_kernel % 2 == 0:
+        sys.exit("Error: --blur-kernel must be an odd number of at least 3.")
     if not 0.0 < args.mask_threshold < 1.0:
         sys.exit("Error: --mask-threshold must be greater than 0 and less than 1.")
     if not 0.0 <= args.alpha <= 1.0:
@@ -141,7 +165,12 @@ def log_parameters(args, log):
     log.emit(f"Output directory:     {args.output_dir}")
     log.emit(f"Weights:              {args.weights}")
     log.emit(f"Replicates:           {args.replicates}")
+    log.emit(f"Flip:                 {args.flip}")
     log.emit(f"Crop (L/R/T/B):       {args.crop_left}/{args.crop_right}/{args.crop_top}/{args.crop_bottom}")
+    contrast_text = (f"CLAHE clip {args.clahe_clip_limit}, tiles {args.clahe_tile_size}"
+                     if args.contrast else "off")
+    log.emit(f"Contrast:             {contrast_text}")
+    log.emit(f"Blur:                 {f'Gaussian, kernel {args.blur_kernel}' if args.blur else 'off'}")
     log.emit(f"Min score:            {args.min_score}")
     log.emit(f"Min contour points:   {args.min_contour_points}")
     log.emit(f"Mask threshold:       {args.mask_threshold}")

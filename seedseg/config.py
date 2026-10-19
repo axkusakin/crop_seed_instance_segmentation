@@ -12,10 +12,16 @@ CONFIG_KEYS = {
     ("input",): "input",
     ("output_dir",): "output_dir",
     ("replicates",): "replicates",
+    ("preprocessing", "flip"): "flip",
     ("preprocessing", "crop", "left"): "crop_left",
     ("preprocessing", "crop", "right"): "crop_right",
     ("preprocessing", "crop", "top"): "crop_top",
     ("preprocessing", "crop", "bottom"): "crop_bottom",
+    ("preprocessing", "contrast", "enabled"): "contrast",
+    ("preprocessing", "contrast", "clip_limit"): "clahe_clip_limit",
+    ("preprocessing", "contrast", "tile_size"): "clahe_tile_size",
+    ("preprocessing", "blur", "enabled"): "blur",
+    ("preprocessing", "blur", "kernel_size"): "blur_kernel",
     ("model", "weights"): "weights",
     ("model", "min_score"): "min_score",
     ("model", "min_contour_points"): "min_contour_points",
@@ -28,11 +34,12 @@ CONFIG_KEYS = {
 
 # Expected Python types per dest; ints are accepted where floats are expected.
 DEST_TYPES = {
-    "input": str, "output_dir": str, "weights": str,
-    "replicates": bool, "save_images": bool,
+    "input": str, "output_dir": str, "weights": str, "flip": str,
+    "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
     "crop_left": float, "crop_right": float, "crop_top": float, "crop_bottom": float,
     "min_score": float, "mask_threshold": float, "alpha": float, "dpi": float,
-    "min_contour_points": int, "max_instances": int,
+    "clahe_clip_limit": float,
+    "min_contour_points": int, "max_instances": int, "clahe_tile_size": int, "blur_kernel": int,
 }
 
 NULLABLE_DESTS = {"dpi"}
