@@ -156,6 +156,18 @@ def format_duration(seconds):
         return f"{hours}h {minutes:02d}m {secs:02d}s"
     return f"{minutes}m {secs:02d}s"
 
+    def emit(self, message=""):
+        print(message)
+        self.lines.append(message)
+
+    def write(self, path):
+        with open(path, "w") as handle:
+            handle.write("\n".join(self.lines) + "\n")
+
+
+# --------------------------------------------------------------------------
+# Detection helpers
+# --------------------------------------------------------------------------
 
 class RunLog:
     """Collects console-style lines and writes them to a run_log.txt at the end."""
