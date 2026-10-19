@@ -13,6 +13,7 @@ from .columns import (
     SEED_PARAMETERS_FILENAME,
 )
 from .measure import measure_instances
+from .outliers import DEFAULT_K, flag_outliers, mark_no_outliers
 from .preprocess import geometric_preprocess, photometric_preprocess
 from .replicates import assign_replicates, parse_sample_and_replicates
 from .runlog import format_duration
@@ -87,10 +88,12 @@ def process_images(args, model, log):
     log.emit(f"Found {total_images} image(s) to process in {args.input}")
     log.emit("-" * 78)
 
+    outlier_k = args.outlier_k if args.outlier_k is not None else DEFAULT_K[args.outlier_method]
     tables = []
     skipped_files = []
     parsing_failures = []
     total_seeds_detected = 0
+    total_outliers = 0
     run_start = time.perf_counter()
 
     for index, filename in enumerate(image_files, start=1):
@@ -111,6 +114,14 @@ def process_images(args, model, log):
             result, filename, args.min_score, args.min_contour_points
         )
 
+        # Outliers are flagged first so that replicate clustering can ignore them.
+        if args.filter_outliers:
+            flag_outliers(metrics, args.outlier_method, outlier_k, args.outlier_tail)
+        else:
+            mark_no_outliers(metrics)
+        outlier_ids = set(metrics.loc[metrics["is_outlier"], "object_id"])
+        total_outliers += len(outlier_ids)
+
         replicate_by_object_id = {} if args.replicates else None
         replicate_text = "sample/replicate: n/a"
         if not metrics.empty:
@@ -124,7 +135,7 @@ def process_images(args, model, log):
 
         if args.save_images:
             visualisation = draw_predictions(
-                image_bgr, instances, args.alpha, replicate_by_object_id
+                image_bgr, instances, args.alpha, replicate_by_object_id, outlier_ids
             )
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
             output_path = os.path.join(predicted_dir, output_name)
@@ -151,6 +162,8 @@ def process_images(args, model, log):
             f"raw detections {raw_instance_count}",
             f"retained {len(instances)}",
         ]
+        if args.filter_outliers:
+            parts.append(f"outliers {len(outlier_ids)}")
         if args.replicates:
             parts.append(replicate_text)
         parts += [score_text, f"{elapsed:.2f}s", f"ETA {eta_text}"]
@@ -206,6 +219,8 @@ def process_images(args, model, log):
         log.emit(f"  Replicate parse fails: {len(parsing_failures)}"
                  + (f" ({', '.join(parsing_failures)})" if parsing_failures else ""))
     log.emit(f"  Total seeds kept:      {total_seeds_detected}")
+    if args.filter_outliers:
+        log.emit(f"  Outliers flagged:      {total_outliers} (excluded from summaries)")
     if args.replicates:
         log.emit(f"  Distinct samples:      {unique_samples}")
         log.emit(f"  Distinct replicates:   {unique_replicates}")

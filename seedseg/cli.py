@@ -12,6 +12,7 @@ from .columns import (
     RUN_LOG_FILENAME, SAMPLES_SUMMARY_FILENAME, SEED_PARAMETERS_FILENAME,
 )
 from .config import ConfigError, load_config, save_config
+from .outliers import DEFAULT_K, OUTLIER_METHODS, OUTLIER_TAILS
 from .preprocess import FLIP_MODES
 from .runlog import RunLog
 
@@ -76,6 +77,21 @@ def build_parser(description):
                             "Lower values widen the masks; 0.5 is the "
                             "original Mask R-CNN behaviour (default: 0.1)."
                         ))
+    parser.add_argument("--filter-outliers", action=argparse.BooleanOptionalAction, default=True,
+                        help=(
+                            "Flag seeds whose area or length is an outlier within their image; "
+                            "they stay in seed_parameters.tsv but are left out of the summaries "
+                            "and of replicate clustering (default: on)"
+                        ))
+    parser.add_argument("--outlier-method", choices=OUTLIER_METHODS, default="iqr",
+                        help="Outlier rule: 'iqr' (Q1/Q3 -/+ k*IQR) or 'mad' (median -/+ k*1.4826*MAD) (default: iqr)")
+    parser.add_argument("--outlier-k", type=float, default=None,
+                        help=(
+                            "Width of the outlier bounds; larger k flags fewer seeds "
+                            f"(default: {DEFAULT_K['iqr']} for iqr, {DEFAULT_K['mad']} for mad)"
+                        ))
+    parser.add_argument("--outlier-tail", choices=OUTLIER_TAILS, default="both",
+                        help="Flag values beyond both bounds, or only too large ones (default: both)")
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
     parser.add_argument("--max-instances", type=int, default=400,
@@ -128,6 +144,12 @@ def validate_args(args):
         sys.exit("Error: --clahe-tile-size must be at least 1.")
     if args.blur_kernel < 3 or args.blur_kernel % 2 == 0:
         sys.exit("Error: --blur-kernel must be an odd number of at least 3.")
+    if args.outlier_method not in OUTLIER_METHODS:
+        sys.exit(f"Error: --outlier-method must be one of {', '.join(OUTLIER_METHODS)}.")
+    if args.outlier_tail not in OUTLIER_TAILS:
+        sys.exit(f"Error: --outlier-tail must be one of {', '.join(OUTLIER_TAILS)}.")
+    if args.outlier_k is not None and args.outlier_k <= 0:
+        sys.exit("Error: --outlier-k must be a positive number.")
     if not 0.0 < args.mask_threshold < 1.0:
         sys.exit("Error: --mask-threshold must be greater than 0 and less than 1.")
     if not 0.0 <= args.alpha <= 1.0:
@@ -175,6 +197,12 @@ def log_parameters(args, log):
     log.emit(f"Min contour points:   {args.min_contour_points}")
     log.emit(f"Mask threshold:       {args.mask_threshold}")
     log.emit(f"Max instances:        {args.max_instances}")
+    if args.filter_outliers:
+        k = args.outlier_k if args.outlier_k is not None else DEFAULT_K[args.outlier_method]
+        log.emit(f"Outlier filter:       {args.outlier_method}, k={k}, tail={args.outlier_tail}, "
+                 "metrics: area, length (per image)")
+    else:
+        log.emit("Outlier filter:       off")
     log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)

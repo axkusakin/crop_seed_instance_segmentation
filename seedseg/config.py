@@ -27,6 +27,10 @@ CONFIG_KEYS = {
     ("model", "min_contour_points"): "min_contour_points",
     ("model", "mask_threshold"): "mask_threshold",
     ("model", "max_instances"): "max_instances",
+    ("postprocessing", "outliers", "enabled"): "filter_outliers",
+    ("postprocessing", "outliers", "method"): "outlier_method",
+    ("postprocessing", "outliers", "k"): "outlier_k",
+    ("postprocessing", "outliers", "tail"): "outlier_tail",
     ("output", "dpi"): "dpi",
     ("output", "save_images"): "save_images",
     ("output", "alpha"): "alpha",
@@ -35,14 +39,15 @@ CONFIG_KEYS = {
 # Expected Python types per dest; ints are accepted where floats are expected.
 DEST_TYPES = {
     "input": str, "output_dir": str, "weights": str, "flip": str,
-    "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
+    "outlier_method": str, "outlier_tail": str, "outlier_k": float,
+    "filter_outliers": bool, "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
     "crop_left": float, "crop_right": float, "crop_top": float, "crop_bottom": float,
     "min_score": float, "mask_threshold": float, "alpha": float, "dpi": float,
     "clahe_clip_limit": float,
     "min_contour_points": int, "max_instances": int, "clahe_tile_size": int, "blur_kernel": int,
 }
 
-NULLABLE_DESTS = {"dpi"}
+NULLABLE_DESTS = {"dpi", "outlier_k"}
 
 
 class ConfigError(ValueError):

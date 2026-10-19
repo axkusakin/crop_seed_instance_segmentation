@@ -44,6 +44,17 @@ model:
   mask_threshold: 0.1      # soft-mask binarisation threshold (0.5 = original Mask R-CNN)
   max_instances: 400       # maximum detections per image
 
+# A seed is flagged as an outlier if its area OR length falls outside the
+# bounds computed from the other seeds of the same image. Outliers stay in
+# seed_parameters.tsv (is_outlier, outlier_reason) and are drawn in red on the
+# overlays, but are excluded from the summaries and from replicate clustering.
+postprocessing:
+  outliers:
+    enabled: true
+    method: iqr            # iqr: Q1/Q3 -/+ k*IQR | mad: median -/+ k*1.4826*MAD
+    k: null                # null = method default (1.5 for iqr, 3 for mad); larger = fewer outliers
+    tail: both             # both | upper (flag only too-large seeds)
+
 output:
   dpi: null                # scan resolution; set (e.g. 500) to report millimetres
   save_images: true        # save prediction overlays

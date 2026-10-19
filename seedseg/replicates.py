@@ -75,17 +75,36 @@ def split_into_groups(centroids, num_groups):
 
 
 def assign_replicates(metrics_df, replicate_ids):
-    """Return a list of replicate IDs aligned to metrics_df's row order."""
+    """Return a list of replicate IDs aligned to metrics_df's row order.
+
+    Groups are found from the non-outlier seeds only (if an is_outlier column
+    is present), so a large artifact can't become a "replicate" of its own.
+    Each outlier then gets the replicate of its nearest non-outlier seed.
+    """
     num_replicates = len(replicate_ids)
     if num_replicates == 1:
         return [replicate_ids[0]] * len(metrics_df)
 
     centroids = metrics_df[["centroid_x", "centroid_y"]].to_numpy(dtype=float)
-    labels = split_into_groups(centroids, num_replicates)
-    ordered_labels = top_to_bottom_order(labels, centroids)
+    if "is_outlier" in metrics_df:
+        is_outlier = metrics_df["is_outlier"].to_numpy(dtype=bool)
+    else:
+        is_outlier = np.zeros(len(metrics_df), dtype=bool)
+    inlier_centroids = centroids[~is_outlier]
 
+    labels = split_into_groups(inlier_centroids, num_replicates)
+    ordered_labels = top_to_bottom_order(labels, inlier_centroids)
     label_to_replicate = {
         label: replicate_id
         for label, replicate_id in zip(ordered_labels, replicate_ids)
     }
-    return [label_to_replicate[label] for label in labels]
+
+    inlier_replicates = iter(label_to_replicate[label] for label in labels)
+    assigned = []
+    for position, centroid in enumerate(centroids):
+        if not is_outlier[position]:
+            assigned.append(next(inlier_replicates))
+        else:
+            distances = np.linalg.norm(inlier_centroids - centroid, axis=1)
+            assigned.append(label_to_replicate[labels[np.argmin(distances)]])
+    return assigned

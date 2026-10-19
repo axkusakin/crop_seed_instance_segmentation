@@ -13,12 +13,13 @@ SEED_COLUMNS = [
     "file_name", "object_id", "detection_score", "AS_seed_area",
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
+    "is_outlier", "outlier_reason",
 ]
 REPLICATE_SEED_COLUMNS = [
     "file_name", "sample_id", "object_id", "detection_score", "replicate_id",
     "AS_seed_area", "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
-    "centroid_x", "centroid_y",
+    "centroid_x", "centroid_y", "is_outlier", "outlier_reason",
 ]
 
 # Pixel-valued columns and how they scale when converted to millimetres:

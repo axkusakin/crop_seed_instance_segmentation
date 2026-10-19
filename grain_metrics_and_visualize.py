@@ -2,10 +2,17 @@
 """Detect barley grains, save per-seed metrics, summary statistics, and
 mask overlays -- all under one output folder.
 
-One Mask R-CNN inference pass per image. No IQR filtering is applied -- every
-predicted object that passes --min-score and --min-contour-points is written
-to the per-seed table and drawn in the overlay (unless --no-save-images). The
-overlay label is the exact zero-based object_id in the table.
+One Mask R-CNN inference pass per image. Every predicted object that passes
+--min-score and --min-contour-points is written to the per-seed table and
+drawn in the overlay (unless --no-save-images). The overlay label is the
+exact zero-based object_id in the table.
+
+Outliers
+--------
+A seed whose area or length is an outlier among the seeds of its image (IQR
+or MAD rule, --outlier-method) is flagged with is_outlier/outlier_reason. It
+stays in seed_parameters.tsv and is drawn in red, but is excluded from the
+summary tables and from replicate clustering. --no-filter-outliers disables it.
 
 Replicates
 ----------

@@ -103,10 +103,30 @@ Key flags (run the script with `-h` for the full list):
 | `--min-contour-points` | `100` | Minimum contour point count kept in the output table |
 | `--mask-threshold` | `0.1` | Probability threshold for binarising soft masks; lower values widen the masks (`0.5` = original Mask R-CNN behaviour) |
 | `--max-instances` | `400` | Maximum Mask R-CNN detections per image |
+| `--filter-outliers` / `--no-filter-outliers` | on | Flag seeds with outlying area or length within each image |
+| `--outlier-method` | `iqr` | `iqr` or `mad` |
+| `--outlier-k` | `1.5` (iqr) / `3` (mad) | Width of the outlier bounds; larger = fewer outliers |
+| `--outlier-tail` | `both` | `both` or `upper` (flag only too-large seeds) |
 | `--alpha` | `0.35` | Overlay opacity |
 
-No IQR or other outlier filtering is applied — every detection that passes `--min-score` and `--min-contour-points`
-is written to the table.
+Every detection that passes `--min-score` and `--min-contour-points` is written to the table.
+
+### Outlier filtering
+
+False detections (mostly dark shadow triangles in the image corners) are usually much larger than real seeds. Each
+seed is checked against the other seeds **of the same image** on two metrics — area and length — and is an outlier
+if **either** is outside the bounds:
+
+* `iqr` (default): `[Q1 − k·IQR, Q3 + k·IQR]`, default `k = 1.5`;
+* `mad`: `[median − k·1.4826·MAD, median + k·1.4826·MAD]`, default `k = 3`.
+
+With `--outlier-tail upper` only too-large seeds are flagged. Images with fewer than 5 seeds are not filtered.
+
+Outliers are **flagged, not deleted**: they stay in `seed_parameters.tsv` with `is_outlier = True` and an
+`outlier_reason` such as `area_high;length_high`, and are drawn as a red unfilled contour labelled `OUTLIER` on the
+overlays. They are excluded from the summary tables (which report the excluded count as `n_outliers`) and from
+replicate clustering, so a large artifact can't be mistaken for a separate plant; each outlier gets the
+`replicate_id` of its nearest non-outlier seed.
 
 ### Preprocessing
 
