@@ -46,7 +46,8 @@ Mask threshold
 Mask R-CNN predicts a soft (0-1) mask for every detected seed, which
 mrcnn.utils.unmold_mask binarises at a fixed 0.5. --mask-threshold overrides
 that value: lower values (e.g. 0.3-0.4) move the mask border outwards, higher
-values move it inwards. The default 0.5 reproduces the original behaviour.
+values move it inwards. The default is 0.1; pass 0.5 to reproduce the
+original Mask R-CNN behaviour.
 The mask can never extend beyond the detection box, whatever the threshold.
 
 Output structure
@@ -711,11 +712,11 @@ def main():
                         help="Minimum detection score (default: 0.95)")
     parser.add_argument("--min-contour-points", type=int, default=100,
                         help="Minimum contour point count (default: 100)")
-    parser.add_argument("--mask-threshold", type=float, default=0.5,
+    parser.add_argument("--mask-threshold", type=float, default=0.1,
                         help=(
                             "Probability threshold used to binarise each soft mask. "
-                            "Lower values (e.g. 0.3-0.4) widen the masks; 0.5 is the "
-                            "original Mask R-CNN behaviour (default: 0.5)."
+                            "Lower values widen the masks; 0.5 is the "
+                            "original Mask R-CNN behaviour (default: 0.1)."
                         ))
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")

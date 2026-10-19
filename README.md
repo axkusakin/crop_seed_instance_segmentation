@@ -86,7 +86,7 @@ Key flags (run either script with `-h` for the full list):
 | `-ct / --crop-top`, `-cb / --crop-bottom` | `0.0` | Fraction of the image height trimmed from that side |
 | `--min-score` | `0.95` | Minimum detection confidence kept in the output table |
 | `--min-contour-points` | `100` | Minimum contour point count kept in the output table |
-| `--mask-threshold` | `0.5` | Probability threshold for binarising soft masks; lower values (e.g. 0.35) widen the masks |
+| `--mask-threshold` | `0.1` | Probability threshold for binarising soft masks; lower values widen the masks (`0.5` = original Mask R-CNN behaviour) |
 | `--max-instances` | `400` | Maximum Mask R-CNN detections per image |
 | `--alpha` | `0.35` | Overlay opacity for `--save-images` |
 
