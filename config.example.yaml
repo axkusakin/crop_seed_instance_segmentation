@@ -52,7 +52,7 @@ postprocessing:
   outliers:
     enabled: true
     method: iqr            # iqr: Q1/Q3 -/+ k*IQR | mad: median -/+ k*1.4826*MAD
-    k: null                # null = method default (1.5 for iqr, 3 for mad); larger = fewer outliers
+    k: null                # null = method default (2.5 for iqr, 4 for mad); larger = fewer outliers
     tail: both             # both | upper (flag only too-large seeds)
 
 output:

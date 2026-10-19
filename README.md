@@ -105,7 +105,7 @@ Key flags (run the script with `-h` for the full list):
 | `--max-instances` | `400` | Maximum Mask R-CNN detections per image |
 | `--filter-outliers` / `--no-filter-outliers` | on | Flag seeds with outlying area or length within each image |
 | `--outlier-method` | `iqr` | `iqr` or `mad` |
-| `--outlier-k` | `1.5` (iqr) / `3` (mad) | Width of the outlier bounds; larger = fewer outliers |
+| `--outlier-k` | `2.5` (iqr) / `4` (mad) | Width of the outlier bounds; larger = fewer outliers |
 | `--outlier-tail` | `both` | `both` or `upper` (flag only too-large seeds) |
 | `--alpha` | `0.35` | Overlay opacity |
 
@@ -117,8 +117,13 @@ False detections (mostly dark shadow triangles in the image corners) are usually
 seed is checked against the other seeds **of the same image** on two metrics — area and length — and is an outlier
 if **either** is outside the bounds:
 
-* `iqr` (default): `[Q1 − k·IQR, Q3 + k·IQR]`, default `k = 1.5`;
-* `mad`: `[median − k·1.4826·MAD, median + k·1.4826·MAD]`, default `k = 3`.
+* `iqr` (default): `[Q1 − k·IQR, Q3 + k·IQR]`, default `k = 2.5`;
+* `mad`: `[median − k·1.4826·MAD, median + k·1.4826·MAD]`, default `k = 4`.
+
+The default `k` values are wider than the textbook 1.5 / 3, which flagged real seeds on the test scans. On 4 labelled
+test images (709 objects, 18 of them artifacts) IQR with `k` 2.4–2.55 and MAD with `k` 3.8–4.1 flagged every artifact
+and no real seed. That window is narrow and based on few images, so check the red contours on new data and adjust
+`--outlier-k` if needed.
 
 With `--outlier-tail upper` only too-large seeds are flagged. Images with fewer than 5 seeds are not filtered.
 
