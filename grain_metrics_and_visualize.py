@@ -25,7 +25,8 @@ Mask threshold
 Mask R-CNN predicts a soft (0-1) mask for every detected seed, which
 mrcnn.utils.unmold_mask binarises at a fixed 0.5. --mask-threshold overrides
 that value: lower values (e.g. 0.3-0.4) move the mask border outwards, higher
-values move it inwards. The default 0.5 reproduces the original behaviour.
+values move it inwards. The default is 0.1; pass 0.5 to reproduce the
+original Mask R-CNN behaviour.
 The mask can never extend beyond the detection box, whatever the threshold.
 
 Output structure
@@ -46,7 +47,7 @@ Examples
     # Convert to millimetres, assuming a 500 DPI scan
     python grain_metrics_and_visualize.py -i images -o output_dir --dpi 500
 
-    # Wider masks (threshold 0.35), tables plus overlays, millimetre output
+    # Mask threshold 0.35, tables plus overlays, millimetre output
     python grain_metrics_and_visualize.py -i images -o output_dir --save-images \
         --mask-threshold 0.35 --dpi 500
 """
@@ -177,6 +178,11 @@ class RunLog:
     def emit(self, message=""):
         print(message)
         self.lines.append(message)
+
+    def fail(self, message):
+        """Record an error message in the log, then exit with it."""
+        self.lines.append(message)
+        sys.exit(message)
 
     def write(self, path):
         with open(path, "w") as handle:
@@ -381,7 +387,7 @@ def process_images(args, model, log):
         if os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
     ]
     if not image_files:
-        sys.exit(f"Error: no supported images found in {args.input}")
+        log.fail(f"Error: no supported images found in {args.input}")
 
     total_images = len(image_files)
     log.emit(f"Found {total_images} image(s) to process in {args.input}")
@@ -444,7 +450,7 @@ def process_images(args, model, log):
     log.emit("-" * 78)
 
     if not tables:
-        sys.exit("Error: no objects passed the selected score and contour filters. Nothing to save.")
+        log.fail("Error: no objects passed the selected score and contour filters. Nothing to save.")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -503,16 +509,16 @@ def main():
                         help="Minimum detection score (default: 0.95)")
     parser.add_argument("--min-contour-points", type=int, default=100,
                         help="Minimum contour point count (default: 100)")
-    parser.add_argument("--mask-threshold", type=float, default=0.5,
+    parser.add_argument("--mask-threshold", type=float, default=0.1,
                         help=(
                             "Probability threshold used to binarise each soft mask. "
-                            "Lower values (e.g. 0.3-0.4) widen the masks; 0.5 is the "
-                            "original Mask R-CNN behaviour (default: 0.5)."
+                            "Lower values widen the masks; 0.5 is the "
+                            "original Mask R-CNN behaviour (default: 0.1)."
                         ))
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
-    parser.add_argument("--max-instances", type=int, default=1000,
-                        help="Maximum final Mask R-CNN detections per image (default: 1000)")
+    parser.add_argument("--max-instances", type=int, default=400,
+                        help="Maximum final Mask R-CNN detections per image (default: 400)")
     parser.add_argument("--dpi", type=float, default=None,
                         help=(
                             "Scan resolution in dots per inch. When set, converts all "
@@ -537,9 +543,20 @@ def main():
     if args.dpi is not None and args.dpi <= 0:
         sys.exit("Error: --dpi must be a positive number.")
 
-    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
-    if os.path.exists(seed_path):
-        response = input(f"Warning: {seed_path} already exists. Overwrite? (y/n): ")
+    existing_outputs = [
+        path for path in (
+            os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME),
+            os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME),
+        )
+        if os.path.exists(path)
+    ]
+    predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
+    if args.save_images and os.path.isdir(predicted_dir) and os.listdir(predicted_dir):
+        existing_outputs.append(predicted_dir)
+    if existing_outputs:
+        response = input(
+            f"Warning: {', '.join(existing_outputs)} already exist(s). Overwrite? (y/n): "
+        )
         if response.lower() != "y":
             sys.exit("Process aborted by user.")
 
@@ -557,20 +574,22 @@ def main():
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)
 
-    install_mask_threshold(args.mask_threshold)
+    try:
+        install_mask_threshold(args.mask_threshold)
 
-    config = InferenceConfig()
-    config.DETECTION_MAX_INSTANCES = args.max_instances
-    model = modellib.MaskRCNN(mode="inference", config=config, model_dir="")
-    log.emit(f"Loading weights from {args.weights}")
-    model.load_weights(args.weights, by_name=True)
+        config = InferenceConfig()
+        config.DETECTION_MAX_INSTANCES = args.max_instances
+        model = modellib.MaskRCNN(mode="inference", config=config, model_dir="")
+        log.emit(f"Loading weights from {args.weights}")
+        model.load_weights(args.weights, by_name=True)
 
-    process_images(args, model, log)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    log_path = os.path.join(args.output_dir, RUN_LOG_FILENAME)
-    log.write(log_path)
-    print(f"Run log saved to {log_path}")
+        process_images(args, model, log)
+    finally:
+        # Written even when the run fails, so failed runs leave a record too.
+        os.makedirs(args.output_dir, exist_ok=True)
+        log_path = os.path.join(args.output_dir, RUN_LOG_FILENAME)
+        log.write(log_path)
+        print(f"Run log saved to {log_path}")
 
 
 if __name__ == "__main__":
