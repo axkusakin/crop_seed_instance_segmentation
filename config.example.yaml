@@ -33,5 +33,5 @@ model:
 
 output:
   dpi: null                # scan resolution; set (e.g. 500) to report millimetres
-  save_images: false       # also save prediction overlays
+  save_images: true        # save prediction overlays
   alpha: 0.35              # overlay opacity

@@ -62,10 +62,10 @@ file name plus the spatial gaps between plants (see [Replicate file-name convent
 
 ```
 # Whole-image accession analysis
-python grain_metrics_and_visualize.py -i images -o output_dir [--save-images] [--dpi 500]
+python grain_metrics_and_visualize.py -i images -o output_dir [--dpi 500]
 
 # Same, but split into per-plant replicates
-python grain_metrics_and_visualize.py -i images -o output_dir --replicates [--save-images] [--dpi 500]
+python grain_metrics_and_visualize.py -i images -o output_dir --replicates [--dpi 500]
 ```
 
 Supported input formats: TIF, TIFF, PNG, JPEG.
@@ -92,7 +92,7 @@ Key flags (run the script with `-h` for the full list):
 | `-o / --output-dir` | required | Root directory for all outputs (flag or config) |
 | `-w / --weights` | `data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5` | Mask R-CNN weights path |
 | `-r / --replicates` | off | Split each image's seeds into plant replicates |
-| `--save-images` | off | Also save prediction overlays |
+| `--save-images` / `--no-save-images` | on | Save prediction overlays |
 | `--dpi` | none (pixels) | Scan resolution; converts length/area columns to millimetres |
 | `-cl / --crop-left`, `-cr / --crop-right` | `0.0` | Fraction of the image width trimmed from that side (e.g. scanner artifacts) |
 | `-ct / --crop-top`, `-cb / --crop-bottom` | `0.0` | Fraction of the image height trimmed from that side |
@@ -100,7 +100,7 @@ Key flags (run the script with `-h` for the full list):
 | `--min-contour-points` | `100` | Minimum contour point count kept in the output table |
 | `--mask-threshold` | `0.1` | Probability threshold for binarising soft masks; lower values widen the masks (`0.5` = original Mask R-CNN behaviour) |
 | `--max-instances` | `400` | Maximum Mask R-CNN detections per image |
-| `--alpha` | `0.35` | Overlay opacity for `--save-images` |
+| `--alpha` | `0.35` | Overlay opacity |
 
 No IQR or other outlier filtering is applied — every detection that passes `--min-score` and `--min-contour-points`
 is written to the table.
@@ -142,7 +142,7 @@ Everything is written under the given `--output-dir`:
     replicates_summary.tsv  summary stats per (sample_id, replicate_id) -- --replicates only
     run_log.txt             run parameters and a per-run summary
     config_used.yaml        resolved parameters of the run (reusable with --config)
-    predicted_masks/        overlay PNGs, only created if --save-images is passed
+    predicted_masks/        overlay PNGs, skipped with --no-save-images
 ```
 
 Per-seed metrics: seed area, length, width, length-to-width ratio, eccentricity, solidity, perimeter length,

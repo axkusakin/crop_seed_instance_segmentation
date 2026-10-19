@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Detect barley grains, save per-seed metrics, summary statistics, and
-optionally mask overlays -- all under one output folder.
+mask overlays -- all under one output folder.
 
 One Mask R-CNN inference pass per image. No IQR filtering is applied -- every
 predicted object that passes --min-score and --min-contour-points is written
-to the per-seed table and, with --save-images, drawn in the overlay. The
+to the per-seed table and drawn in the overlay (unless --no-save-images). The
 overlay label is the exact zero-based object_id in the table.
 
 Replicates
@@ -44,7 +44,7 @@ Output structure
         replicates_summary.tsv   summary stats per (sample_id, replicate_id), --replicates only
         run_log.txt              run parameters and a per-run summary
         config_used.yaml         resolved parameters (reusable with --config)
-        predicted_masks/         only created if --save-images is passed
+        predicted_masks/         overlays, skipped with --no-save-images
 
 Config file
 -----------
@@ -61,7 +61,7 @@ Examples
 
     # Per-plant replicates, overlays, millimetres (500 DPI scan)
     python grain_metrics_and_visualize.py -i images -o output_dir --replicates \\
-        --save-images --dpi 500
+        --dpi 500
 
     # Trim 8% from both lateral edges, mask threshold 0.35
     python grain_metrics_and_visualize.py -i images -o output_dir \\

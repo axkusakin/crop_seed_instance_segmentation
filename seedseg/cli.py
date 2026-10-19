@@ -37,8 +37,11 @@ def build_parser(description):
                             "file name (<sample_id>_<r1-r2-...>) and the vertical gaps between "
                             "plants; also writes replicates_summary.tsv"
                         ))
-    parser.add_argument("--save-images", action=argparse.BooleanOptionalAction, default=False,
-                        help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
+    parser.add_argument("--save-images", action=argparse.BooleanOptionalAction, default=True,
+                        help=(
+                            f"Save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME} "
+                            "(default: on; --no-save-images to skip)"
+                        ))
     parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
                         help="Fraction of the image width removed from the left edge (default: 0.0)")
     parser.add_argument("-cr", "--crop-right", type=float, default=0.0,
