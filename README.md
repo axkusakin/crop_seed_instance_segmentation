@@ -55,31 +55,32 @@ an existing `data.zip`/`data/`. Contents:
 
 ## Extracting seed morphology metrics
 
-Two scripts detect grains with Mask R-CNN and compute per-seed morphological metrics. Both take the same input/output
-shape and most of the same flags; pick whichever matches how your images are laid out.
-
-* **`grain_metrics_and_visualize.py`** — treats every seed detected in an image as belonging to one accession
-  (`file_name`). Use this when each image contains a single plant's seeds.
-* **`grain_metrics_and_visualize_with_replicates.py`** — additionally splits seeds spread across an image into up
-  to 3 individual-plant replicates, using the image file name plus the spatial gaps between plants.
+`grain_metrics_and_visualize.py` detects grains with Mask R-CNN and computes per-seed morphological metrics. By
+default every seed detected in an image is treated as belonging to one accession (`file_name`). With
+`-r / --replicates`, the seeds of each image are additionally split into individual-plant replicates, using the image
+file name plus the spatial gaps between plants (see [Replicate file-name convention](#replicate-file-name-convention)).
 
 ```
 # Whole-image accession analysis
 python grain_metrics_and_visualize.py -i images -o output_dir [--save-images] [--dpi 500]
 
 # Same, but split into per-plant replicates
-python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir [--save-images] [--dpi 500]
+python grain_metrics_and_visualize.py -i images -o output_dir --replicates [--save-images] [--dpi 500]
 ```
 
 Supported input formats: TIF, TIFF, PNG, JPEG.
 
-Key flags (run either script with `-h` for the full list):
+The script is a thin entry point; the pipeline itself lives in the [`seedseg/`](./seedseg) package (preprocessing,
+measurement, replicate assignment, unit conversion, summaries, overlays). Only `seedseg/model.py` imports TensorFlow.
+
+Key flags (run the script with `-h` for the full list):
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `-i / --input` | required | Directory of input images |
 | `-o / --output-dir` | required | Root directory for all outputs |
 | `-w / --weights` | `data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5` | Mask R-CNN weights path |
+| `-r / --replicates` | off | Split each image's seeds into plant replicates |
 | `--save-images` | off | Also save prediction overlays |
 | `--dpi` | none (pixels) | Scan resolution; converts length/area columns to millimetres |
 | `-cl / --crop-left`, `-cr / --crop-right` | `0.0` | Fraction of the image width trimmed from that side (e.g. scanner artifacts) |
@@ -102,7 +103,7 @@ pixel columns are dropped.
 
 ### Replicate file-name convention
 
-`grain_metrics_and_visualize_with_replicates.py` expects input file names of the form
+With `--replicates`, the script expects input file names of the form
 `<sample_id>_<r1-r2-...>.ext`, where the trailing underscore-separated token is one or more dash-separated
 replicate numbers:
 
@@ -127,13 +128,13 @@ Everything is written under the given `--output-dir`:
 <output-dir>/
     seed_parameters.tsv     one row per detected seed
     samples_summary.tsv     summary stats (mean/sd/min/max/median) per accession or sample_id
-    replicates_summary.tsv  summary stats per (sample_id, replicate_id) -- replicates script only
+    replicates_summary.tsv  summary stats per (sample_id, replicate_id) -- --replicates only
     run_log.txt             run parameters and a per-run summary
     predicted_masks/        overlay PNGs, only created if --save-images is passed
 ```
 
 Per-seed metrics: seed area, length, width, length-to-width ratio, eccentricity, solidity, perimeter length,
-circularity (plus centroid position in the replicates script, used internally for replicate assignment).
+circularity (plus centroid position with `--replicates`, used internally for replicate assignment).
 
 ## Other notebooks
 
