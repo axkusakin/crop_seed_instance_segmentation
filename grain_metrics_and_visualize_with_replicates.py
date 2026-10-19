@@ -41,6 +41,15 @@ pixel columns are dropped from the output. Conversion happens once, on the
 fully assembled table, after replicate assignment and visualisation (which
 always operate in pixel space).
 
+Mask threshold
+--------------
+Mask R-CNN predicts a soft (0-1) mask for every detected seed, which
+mrcnn.utils.unmold_mask binarises at a fixed 0.5. --mask-threshold overrides
+that value: lower values (e.g. 0.3-0.4) move the mask border outwards, higher
+values move it inwards. The default is 0.1; pass 0.5 to reproduce the
+original Mask R-CNN behaviour.
+The mask can never extend beyond the detection box, whatever the threshold.
+
 Output structure
 -----------------
 Everything is written under a single --output-dir:
@@ -63,7 +72,11 @@ python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
 
 # Exclude 8% from both lateral edges, allow up to 400 detections per image
 python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
-    --save-images --edge-crop 0.08 --max-instances 400 --dpi 500
+    --save-images -cl 0.08 -cr 0.08 --max-instances 400 --dpi 500
+
+# Wider masks (threshold 0.35), tables plus overlays, millimetre output
+python grain_metrics_and_visualize_with_replicates.py -i images -o output_dir \
+    --save-images --mask-threshold 0.35 --dpi 500
 """
 
 import argparse
@@ -93,6 +106,7 @@ from scipy.spatial.distance import pdist, squareform
 
 try:
     import mrcnn.model as modellib
+    from mrcnn import utils as mrcnn_utils
     from mrcnn.config import Config
 except ImportError:
     sys.exit("Error: Mask R-CNN library not found. Run this script from the repository root.")
@@ -105,6 +119,7 @@ class InferenceConfig(Config):
     NUM_CLASSES = 2  # background + seed
     IMAGE_MIN_DIM = 512
     IMAGE_MAX_DIM = 8192
+    IMAGE_RESIZE_MODE = "pad64"  # as in the original Mask_RCNN.ipynb
     DETECTION_MIN_CONFIDENCE = 0.0
     RPN_NMS_THRESHOLD = 0.4
 
@@ -149,6 +164,33 @@ RUN_LOG_FILENAME = "run_log.txt"
 
 
 # --------------------------------------------------------------------------
+# Mask threshold
+# --------------------------------------------------------------------------
+
+def install_mask_threshold(threshold):
+    """Make model.detect() binarise soft masks at `threshold` instead of 0.5.
+
+    mrcnn.model.MaskRCNN.unmold_detections() calls utils.unmold_mask(), looking
+    the function up on the mrcnn.utils module at call time. Replacing that
+    module attribute changes the threshold without editing the vendored
+    library. The replacement is identical to the original except for the
+    threshold value.
+    """
+    if not hasattr(mrcnn_utils, "unmold_mask") or not hasattr(mrcnn_utils, "resize"):
+        sys.exit("Error: mrcnn.utils has no unmold_mask/resize; cannot set the mask threshold.")
+
+    def unmold_mask(mask, bbox, image_shape):
+        y1, x1, y2, x2 = bbox
+        mask = mrcnn_utils.resize(mask, (y2 - y1, x2 - x1))
+        mask = mask >= threshold
+        full_mask = np.zeros(image_shape[:2], dtype=bool)
+        full_mask[y1:y2, x1:x2] = mask
+        return full_mask
+
+    mrcnn_utils.unmold_mask = unmold_mask
+
+
+# --------------------------------------------------------------------------
 # Console/logging helpers
 # --------------------------------------------------------------------------
 
@@ -173,6 +215,11 @@ class RunLog:
         print(message)
         self.lines.append(message)
 
+    def fail(self, message):
+        """Record an error message in the log, then exit with it."""
+        self.lines.append(message)
+        sys.exit(message)
+
     def write(self, path):
         with open(path, "w") as handle:
             handle.write("\n".join(self.lines) + "\n")
@@ -189,13 +236,14 @@ def instance_colour(object_id):
     return tuple(int(value) for value in cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0])
 
 
-def crop_lateral_edges(image_bgr, edge_crop):
-    """Remove edge_crop of the original width from both lateral sides."""
-    width = image_bgr.shape[1]
-    edge_px = int(round(width * edge_crop))
-    if edge_px == 0:
-        return image_bgr
-    return image_bgr[:, edge_px:width - edge_px]
+def crop_edges(image_bgr, left, right, top, bottom):
+    """Remove a fraction of the original width (left/right) or height (top/bottom)."""
+    height, width = image_bgr.shape[:2]
+    left_px = int(round(width * left))
+    right_px = int(round(width * right))
+    top_px = int(round(height * top))
+    bottom_px = int(round(height * bottom))
+    return image_bgr[top_px:height - bottom_px, left_px:width - right_px]
 
 
 def detect_and_measure(result, image_name, min_score, min_contour_points):
@@ -481,7 +529,7 @@ def process_images(args, model, log):
         if os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
     ]
     if not image_files:
-        sys.exit(f"Error: no supported images found in {args.input}")
+        log.fail(f"Error: no supported images found in {args.input}")
 
     total_images = len(image_files)
     log.emit(f"Found {total_images} image(s) to process in {args.input}")
@@ -502,7 +550,8 @@ def process_images(args, model, log):
             skipped_files.append(filename)
             continue
 
-        image_bgr = crop_lateral_edges(original_bgr, args.edge_crop)
+        image_bgr = crop_edges(original_bgr, args.crop_left, args.crop_right,
+                               args.crop_top, args.crop_bottom)
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
 
@@ -563,7 +612,7 @@ def process_images(args, model, log):
     log.emit("-" * 78)
 
     if not tables:
-        sys.exit("Error: no objects passed the selected score and contour filters. Nothing to save.")
+        log.fail("Error: no objects passed the selected score and contour filters. Nothing to save.")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -651,12 +700,24 @@ def main():
                         help="Mask R-CNN weights path")
     parser.add_argument("--save-images", action="store_true",
                         help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
-    parser.add_argument("--edge-crop", type=float, default=0.0,
-                        help="Fraction removed from each left/right image edge (default: 0.0)")
+    parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
+                        help="Fraction of the image width removed from the left edge (default: 0.0)")
+    parser.add_argument("-cr", "--crop-right", type=float, default=0.0,
+                        help="Fraction of the image width removed from the right edge (default: 0.0)")
+    parser.add_argument("-ct", "--crop-top", type=float, default=0.0,
+                        help="Fraction of the image height removed from the top edge (default: 0.0)")
+    parser.add_argument("-cb", "--crop-bottom", type=float, default=0.0,
+                        help="Fraction of the image height removed from the bottom edge (default: 0.0)")
     parser.add_argument("--min-score", type=float, default=0.95,
                         help="Minimum detection score (default: 0.95)")
     parser.add_argument("--min-contour-points", type=int, default=100,
                         help="Minimum contour point count (default: 100)")
+    parser.add_argument("--mask-threshold", type=float, default=0.1,
+                        help=(
+                            "Probability threshold used to binarise each soft mask. "
+                            "Lower values widen the masks; 0.5 is the "
+                            "original Mask R-CNN behaviour (default: 0.1)."
+                        ))
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
     parser.add_argument("--max-instances", type=int, default=400,
@@ -674,8 +735,16 @@ def main():
         sys.exit(f"Error: input directory does not exist: {args.input}")
     if not os.path.isfile(args.weights):
         sys.exit(f"Error: weights file does not exist: {args.weights}")
-    if not 0.0 <= args.edge_crop < 0.5:
-        sys.exit("Error: --edge-crop must be at least 0 and less than 0.5.")
+    for flag, value in (("--crop-left", args.crop_left), ("--crop-right", args.crop_right),
+                        ("--crop-top", args.crop_top), ("--crop-bottom", args.crop_bottom)):
+        if not 0.0 <= value < 1.0:
+            sys.exit(f"Error: {flag} must be at least 0 and less than 1.")
+    if args.crop_left + args.crop_right >= 1.0:
+        sys.exit("Error: --crop-left and --crop-right together must be less than 1.")
+    if args.crop_top + args.crop_bottom >= 1.0:
+        sys.exit("Error: --crop-top and --crop-bottom together must be less than 1.")
+    if not 0.0 < args.mask_threshold < 1.0:
+        sys.exit("Error: --mask-threshold must be greater than 0 and less than 1.")
     if not 0.0 <= args.alpha <= 1.0:
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
@@ -683,9 +752,21 @@ def main():
     if args.dpi is not None and args.dpi <= 0:
         sys.exit("Error: --dpi must be a positive number.")
 
-    seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
-    if os.path.exists(seed_path):
-        response = input(f"Warning: {seed_path} already exists. Overwrite? (y/n): ")
+    existing_outputs = [
+        path for path in (
+            os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME),
+            os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME),
+            os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME),
+        )
+        if os.path.exists(path)
+    ]
+    predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
+    if args.save_images and os.path.isdir(predicted_dir) and os.listdir(predicted_dir):
+        existing_outputs.append(predicted_dir)
+    if existing_outputs:
+        response = input(
+            f"Warning: {', '.join(existing_outputs)} already exist(s). Overwrite? (y/n): "
+        )
         if response.lower() != "y":
             sys.exit("Process aborted by user.")
 
@@ -694,26 +775,31 @@ def main():
     log.emit(f"Input directory:      {args.input}")
     log.emit(f"Output directory:     {args.output_dir}")
     log.emit(f"Weights:              {args.weights}")
-    log.emit(f"Edge crop:            {args.edge_crop}")
+    log.emit(f"Crop (L/R/T/B):      {args.crop_left}/{args.crop_right}/{args.crop_top}/{args.crop_bottom}")
     log.emit(f"Min score:            {args.min_score}")
     log.emit(f"Min contour points:   {args.min_contour_points}")
+    log.emit(f"Mask threshold:       {args.mask_threshold}")
     log.emit(f"Max instances:        {args.max_instances}")
     log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)
 
-    config = InferenceConfig()
-    config.DETECTION_MAX_INSTANCES = args.max_instances
-    model = modellib.MaskRCNN(mode="inference", config=config, model_dir="")
-    log.emit(f"Loading weights from {args.weights}")
-    model.load_weights(args.weights, by_name=True)
+    try:
+        install_mask_threshold(args.mask_threshold)
 
-    process_images(args, model, log)
+        config = InferenceConfig()
+        config.DETECTION_MAX_INSTANCES = args.max_instances
+        model = modellib.MaskRCNN(mode="inference", config=config, model_dir="")
+        log.emit(f"Loading weights from {args.weights}")
+        model.load_weights(args.weights, by_name=True)
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    log_path = os.path.join(args.output_dir, RUN_LOG_FILENAME)
-    log.write(log_path)
-    print(f"Run log saved to {log_path}")
+        process_images(args, model, log)
+    finally:
+        # Written even when the run fails, so failed runs leave a record too.
+        os.makedirs(args.output_dir, exist_ok=True)
+        log_path = os.path.join(args.output_dir, RUN_LOG_FILENAME)
+        log.write(log_path)
+        print(f"Run log saved to {log_path}")
 
 
 if __name__ == "__main__":

@@ -82,9 +82,11 @@ Key flags (run either script with `-h` for the full list):
 | `-w / --weights` | `data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5` | Mask R-CNN weights path |
 | `--save-images` | off | Also save prediction overlays |
 | `--dpi` | none (pixels) | Scan resolution; converts length/area columns to millimetres |
-| `--edge-crop` | `0.0` | Fraction trimmed from both left/right image edges (for scanner artifacts) |
+| `-cl / --crop-left`, `-cr / --crop-right` | `0.0` | Fraction of the image width trimmed from that side (e.g. scanner artifacts) |
+| `-ct / --crop-top`, `-cb / --crop-bottom` | `0.0` | Fraction of the image height trimmed from that side |
 | `--min-score` | `0.95` | Minimum detection confidence kept in the output table |
 | `--min-contour-points` | `100` | Minimum contour point count kept in the output table |
+| `--mask-threshold` | `0.1` | Probability threshold for binarising soft masks; lower values widen the masks (`0.5` = original Mask R-CNN behaviour) |
 | `--max-instances` | `400` | Maximum Mask R-CNN detections per image |
 | `--alpha` | `0.35` | Overlay opacity for `--save-images` |
 

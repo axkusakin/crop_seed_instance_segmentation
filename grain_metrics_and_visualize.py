@@ -200,13 +200,14 @@ def instance_colour(object_id):
     return tuple(int(value) for value in cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0])
 
 
-def crop_lateral_edges(image_bgr, edge_crop):
-    """Remove edge_crop of the original width from both lateral sides."""
-    width = image_bgr.shape[1]
-    edge_px = int(round(width * edge_crop))
-    if edge_px == 0:
-        return image_bgr
-    return image_bgr[:, edge_px:width - edge_px]
+def crop_edges(image_bgr, left, right, top, bottom):
+    """Remove a fraction of the original width (left/right) or height (top/bottom)."""
+    height, width = image_bgr.shape[:2]
+    left_px = int(round(width * left))
+    right_px = int(round(width * right))
+    top_px = int(round(height * top))
+    bottom_px = int(round(height * bottom))
+    return image_bgr[top_px:height - bottom_px, left_px:width - right_px]
 
 
 def detect_and_measure(result, image_name, min_score, min_contour_points):
@@ -407,7 +408,8 @@ def process_images(args, model, log):
             skipped_files.append(filename)
             continue
 
-        image_bgr = crop_lateral_edges(original_bgr, args.edge_crop)
+        image_bgr = crop_edges(original_bgr, args.crop_left, args.crop_right,
+                               args.crop_top, args.crop_bottom)
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
         metrics, instances, raw_instance_count = detect_and_measure(
@@ -503,8 +505,14 @@ def main():
                         help="Mask R-CNN weights path")
     parser.add_argument("--save-images", action="store_true",
                         help=f"Also save prediction overlays in <output-dir>/{PREDICTED_MASKS_DIRNAME}")
-    parser.add_argument("--edge-crop", type=float, default=0.0,
-                        help="Fraction removed from each left/right image edge (default: 0.0)")
+    parser.add_argument("-cl", "--crop-left", type=float, default=0.0,
+                        help="Fraction of the image width removed from the left edge (default: 0.0)")
+    parser.add_argument("-cr", "--crop-right", type=float, default=0.0,
+                        help="Fraction of the image width removed from the right edge (default: 0.0)")
+    parser.add_argument("-ct", "--crop-top", type=float, default=0.0,
+                        help="Fraction of the image height removed from the top edge (default: 0.0)")
+    parser.add_argument("-cb", "--crop-bottom", type=float, default=0.0,
+                        help="Fraction of the image height removed from the bottom edge (default: 0.0)")
     parser.add_argument("--min-score", type=float, default=0.95,
                         help="Minimum detection score (default: 0.95)")
     parser.add_argument("--min-contour-points", type=int, default=100,
@@ -532,8 +540,14 @@ def main():
         sys.exit(f"Error: input directory does not exist: {args.input}")
     if not os.path.isfile(args.weights):
         sys.exit(f"Error: weights file does not exist: {args.weights}")
-    if not 0.0 <= args.edge_crop < 0.5:
-        sys.exit("Error: --edge-crop must be at least 0 and less than 0.5.")
+    for flag, value in (("--crop-left", args.crop_left), ("--crop-right", args.crop_right),
+                        ("--crop-top", args.crop_top), ("--crop-bottom", args.crop_bottom)):
+        if not 0.0 <= value < 1.0:
+            sys.exit(f"Error: {flag} must be at least 0 and less than 1.")
+    if args.crop_left + args.crop_right >= 1.0:
+        sys.exit("Error: --crop-left and --crop-right together must be less than 1.")
+    if args.crop_top + args.crop_bottom >= 1.0:
+        sys.exit("Error: --crop-top and --crop-bottom together must be less than 1.")
     if not 0.0 < args.mask_threshold < 1.0:
         sys.exit("Error: --mask-threshold must be greater than 0 and less than 1.")
     if not 0.0 <= args.alpha <= 1.0:
@@ -565,7 +579,7 @@ def main():
     log.emit(f"Input directory:      {args.input}")
     log.emit(f"Output directory:     {args.output_dir}")
     log.emit(f"Weights:              {args.weights}")
-    log.emit(f"Edge crop:            {args.edge_crop}")
+    log.emit(f"Crop (L/R/T/B):      {args.crop_left}/{args.crop_right}/{args.crop_top}/{args.crop_bottom}")
     log.emit(f"Min score:            {args.min_score}")
     log.emit(f"Min contour points:   {args.min_contour_points}")
     log.emit(f"Mask threshold:       {args.mask_threshold}")
