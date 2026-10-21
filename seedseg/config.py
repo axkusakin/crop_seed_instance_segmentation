@@ -31,16 +31,18 @@ CONFIG_KEYS = {
     ("postprocessing", "outliers", "method"): "outlier_method",
     ("postprocessing", "outliers", "k"): "outlier_k",
     ("postprocessing", "outliers", "tail"): "outlier_tail",
+    ("measurements", "efd_harmonics"): "efd_harmonics",
     ("output", "dpi"): "dpi",
     ("output", "save_images"): "save_images",
     ("output", "alpha"): "alpha",
+    ("output", "mark_base"): "mark_base",
 }
 
 # Expected Python types per dest; ints are accepted where floats are expected.
 DEST_TYPES = {
     "input": str, "output_dir": str, "weights": str, "flip": str,
     "outlier_method": str, "outlier_tail": str, "outlier_k": float,
-    "filter_outliers": bool, "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
+    "filter_outliers": bool, "mark_base": bool, "efd_harmonics": int, "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
     "crop_left": float, "crop_right": float, "crop_top": float, "crop_bottom": float,
     "min_score": float, "mask_threshold": float, "alpha": float, "dpi": float,
     "clahe_clip_limit": float,

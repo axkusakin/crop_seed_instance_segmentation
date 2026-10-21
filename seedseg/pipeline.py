@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .columns import (
-    IMAGE_EXTENSIONS, PREDICTED_MASKS_DIRNAME, REPLICATE_SEED_COLUMNS,
+    EFD_FILENAME, IMAGE_EXTENSIONS, PREDICTED_MASKS_DIRNAME, REPLICATE_SEED_COLUMNS,
     REPLICATES_SUMMARY_FILENAME, SAMPLES_SUMMARY_FILENAME, SEED_COLUMNS,
     SEED_PARAMETERS_FILENAME,
 )
@@ -19,7 +19,7 @@ from .preprocess import geometric_preprocess, photometric_preprocess
 from .replicates import assign_replicates, parse_sample_and_replicates
 from .runlog import format_duration
 from .summary import summarise
-from .units import convert_to_millimetres, shape_metric_columns_for
+from .units import convert_to_millimetres, summary_metric_columns_for
 from .visualize import draw_predictions
 
 
@@ -42,9 +42,16 @@ def label_replicates(metrics, filename, log):
     return f"sample {sample_id!r}, {len(replicate_ids)} replicate(s)", True
 
 
+def efd_table(metrics, efd, replicates):
+    """Prefix one image's EFD coefficients with the seed's identifiers and outlier flag."""
+    id_columns = ["file_name"] + (["sample_id", "replicate_id"] if replicates else [])
+    keys = metrics[id_columns + ["object_id", "is_outlier"]]
+    return keys.merge(efd, on="object_id", how="inner")
+
+
 def write_summaries(final_df, args, log):
     """Write the summary table(s); returns True if they were created."""
-    metric_columns = shape_metric_columns_for(args.dpi)
+    metric_columns = summary_metric_columns_for(args.dpi)
 
     if not args.replicates:
         samples_summary = summarise(final_df, ["file_name"], metric_columns)
@@ -90,6 +97,7 @@ def process_images(args, model, log):
 
     outlier_k = args.outlier_k if args.outlier_k is not None else DEFAULT_K[args.outlier_method]
     tables = []
+    efd_tables = []
     skipped_files = []
     parsing_failures = []
     total_seeds_detected = 0
@@ -110,8 +118,9 @@ def process_images(args, model, log):
         model_input_bgr = photometric_preprocess(image_bgr, args)
         image_rgb = cv2.cvtColor(model_input_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
-        metrics, instances, raw_instance_count = measure_instances(
-            result, filename, args.min_score, args.min_contour_points
+        metrics, instances, raw_instance_count, efd = measure_instances(
+            result, filename, image_bgr, args.min_score, args.min_contour_points,
+            args.efd_harmonics,
         )
 
         # Outliers are flagged first so that replicate clustering can ignore them.
@@ -128,17 +137,21 @@ def process_images(args, model, log):
                 parsing_failures.append(filename)
 
         # Number seeds in reading order (outliers last); overlay labels use the new IDs.
-        renumber_seeds(metrics, instances)
+        id_mapping = renumber_seeds(metrics, instances)
         outlier_ids = set(metrics.loc[metrics["is_outlier"], "object_id"])
         total_outliers += len(outlier_ids)
         if not metrics.empty:
             if args.replicates:
                 replicate_by_object_id = dict(zip(metrics["object_id"], metrics["replicate_id"]))
             tables.append(metrics)
+            if args.efd_harmonics:
+                efd["object_id"] = efd["object_id"].map(id_mapping)
+                efd_tables.append(efd_table(metrics, efd, args.replicates))
 
         if args.save_images:
             visualisation = draw_predictions(
-                image_bgr, instances, args.alpha, replicate_by_object_id, outlier_ids
+                image_bgr, instances, args.alpha, replicate_by_object_id, outlier_ids,
+                mark_base=args.mark_base,
             )
             output_name = f"{os.path.splitext(filename)[0]}_predicted.png"
             output_path = os.path.join(predicted_dir, output_name)
@@ -191,6 +204,14 @@ def process_images(args, model, log):
     seed_path = os.path.join(args.output_dir, SEED_PARAMETERS_FILENAME)
     final_df.to_csv(seed_path, sep="\t", index=False)
     log.emit(f"Per-seed table saved to {seed_path}")
+
+    if efd_tables:
+        efd_df = pd.concat(efd_tables, ignore_index=True).sort_values(
+            by=["file_name", "object_id"], kind="stable"
+        )
+        efd_path = os.path.join(args.output_dir, EFD_FILENAME)
+        efd_df.to_csv(efd_path, sep="\t", index=False)
+        log.emit(f"EFD coefficients ({args.efd_harmonics} harmonics) saved to {efd_path}")
 
     summaries_created = write_summaries(final_df, args, log)
 

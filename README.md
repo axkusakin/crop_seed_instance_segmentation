@@ -107,6 +107,8 @@ Key flags (run the script with `-h` for the full list):
 | `--outlier-method` | `iqr` | `iqr` or `mad` |
 | `--outlier-k` | `2.5` (iqr) / `4` (mad) | Width of the outlier bounds; larger = fewer outliers |
 | `--outlier-tail` | `both` | `both` or `upper` (flag only too-large seeds) |
+| `--efd-harmonics` | `20` | Elliptic Fourier harmonics per seed (`efd_coefficients.tsv`); `0` = off |
+| `--mark-base` / `--no-mark-base` | on | Dot at the end detected as each seed's base on the overlays |
 | `--alpha` | `0.35` | Overlay opacity |
 
 Every detection that passes `--min-score` and `--min-contour-points` is written to the table.
@@ -188,15 +190,51 @@ Everything is written under the given `--output-dir`:
 ```
 <output-dir>/
     seed_parameters.tsv     one row per detected seed
-    samples_summary.tsv     summary stats (mean/sd/min/max/median) per accession or sample_id
+    samples_summary.tsv     summary stats (mean/sd/median/min/max) per accession or sample_id
     replicates_summary.tsv  summary stats per (sample_id, replicate_id) -- --replicates only
+    efd_coefficients.tsv    normalised elliptic Fourier coefficients, one row per seed
     run_log.txt             run parameters and a per-run summary
     config_used.yaml        resolved parameters of the run (reusable with --config)
     predicted_masks/        overlay PNGs, skipped with --no-save-images
 ```
 
-Per-seed metrics: seed area, length, width, length-to-width ratio, eccentricity, solidity, perimeter length,
-circularity (plus centroid position with `--replicates`, used internally for replicate assignment).
+### Per-seed metrics
+
+Columns of `seed_parameters.tsv`, in this fixed order (the order is defined once, in `seedseg/columns.py`):
+
+* **Identifiers:** `file_name` (with `--replicates` also `sample_id`, `replicate_id`), `object_id`, `model_index`,
+  `detection_score`.
+* **Size:** seed area, length, width, perimeter length (pixels, or mm/mm² with `--dpi`).
+* **Shape ratios:** length-to-width ratio, eccentricity, solidity, circularity.
+* **Width profile and asymmetry** (dimensionless). The seed is aligned to its long axis and its width is measured in
+  50 slices along the length. The **base** is taken to be the blunter end — the one with the larger mean width over
+  the outer 15% of the length — so profile positions run from base (0) to tip (1):
+  * `lateral_area_asymmetry` — area difference between the two sides of the line joining the seed's ends, as a share
+    of the area (0 = symmetric);
+  * `lateral_mirror_iou` — overlap of the seed with its mirror image across that line (1 = symmetric);
+  * `longitudinal_area_asymmetry` — (base-half area − tip-half area) / area;
+  * `width_profile_skewness` — skewness of the width profile from base to tip;
+  * `max_width_position` — where along the length the seed is widest (0 = base, 1 = tip);
+  * `max_width_position_from_nearest_end` — the same as distance from the nearer end (0–0.5), independent of
+    which end is the base;
+  * `base_tip_width_ratio` — mean width near the base / near the tip (≥ 1). Close to 1 the two ends look alike and
+    the base/tip orientation (and the signed metrics above) is unreliable.
+* **Colour** in CIELAB, measured on the image without contrast/blur preprocessing: `colour_L_mean/_sd` (lightness,
+  0–100), `colour_a_mean/_sd` (green − / red +), `colour_b_mean/_sd` (blue − / yellow +). The scans have no colour
+  chart, so colour values are comparable only between scans made with the same scanner and settings.
+* With `--replicates`: centroid position (used for replicate assignment).
+* `is_outlier`, `outlier_reason`.
+
+Summary tables report, for each metric in the same order, `_mean`, `_sd`, `_median`, `_min`, `_max` (per-seed colour
+SDs are not summarised).
+
+`efd_coefficients.tsv` holds elliptic Fourier descriptors of each seed's outline (`pyefd`, normalised for size,
+rotation and starting point; the first harmonic's three constant coefficients are omitted), keyed by `file_name` and
+`object_id`.
+
+The masks come from Mask R-CNN's 28×28 mask head scaled up to each seed's box, so fine outline detail is smoothed.
+Whether the profile/asymmetry metrics capture differences such as central vs lateral grains still has to be checked
+against labelled seeds.
 
 ## Other notebooks
 

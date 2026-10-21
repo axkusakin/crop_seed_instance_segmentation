@@ -1,6 +1,6 @@
 """Pixel to millimetre conversion."""
 
-from .columns import AREA_COLUMNS, LENGTH_COLUMNS, POSITION_COLUMNS, RATIO_COLUMNS
+from .columns import AREA_COLUMNS, LENGTH_COLUMNS, POSITION_COLUMNS, SUMMARY_METRIC_ORDER
 
 
 def convert_to_millimetres(df, dpi):
@@ -27,10 +27,17 @@ def convert_to_millimetres(df, dpi):
     return converted.rename(columns=rename_map)
 
 
-def shape_metric_columns_for(dpi):
-    """Return the shape-metric column names to summarise, given the active unit."""
+def unit_column_name(column, dpi):
+    """Name a pixel-based column takes after conversion (unchanged without --dpi)."""
     if dpi is None:
-        return LENGTH_COLUMNS + AREA_COLUMNS + RATIO_COLUMNS
-    length_mm = [f"{column}_mm" for column in LENGTH_COLUMNS]
-    area_mm2 = [f"{column}_mm2" for column in AREA_COLUMNS]
-    return length_mm + area_mm2 + RATIO_COLUMNS
+        return column
+    if column in LENGTH_COLUMNS + POSITION_COLUMNS:
+        return f"{column}_mm"
+    if column in AREA_COLUMNS:
+        return f"{column}_mm2"
+    return column
+
+
+def summary_metric_columns_for(dpi):
+    """Return the metric columns to summarise, in output order, given the active unit."""
+    return [unit_column_name(column, dpi) for column in SUMMARY_METRIC_ORDER]

@@ -55,7 +55,11 @@ postprocessing:
     k: null                # null = method default (2.5 for iqr, 4 for mad); larger = fewer outliers
     tail: both             # both | upper (flag only too-large seeds)
 
+measurements:
+  efd_harmonics: 20        # elliptic Fourier harmonics per seed -> efd_coefficients.tsv; 0 = off
+
 output:
   dpi: null                # scan resolution; set (e.g. 500) to report millimetres
   save_images: true        # save prediction overlays
   alpha: 0.35              # overlay opacity
+  mark_base: true          # dot at the end detected as each seed's base

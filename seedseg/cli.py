@@ -92,6 +92,13 @@ def build_parser(description):
                         ))
     parser.add_argument("--outlier-tail", choices=OUTLIER_TAILS, default="both",
                         help="Flag values beyond both bounds, or only too large ones (default: both)")
+    parser.add_argument("--efd-harmonics", type=int, default=20,
+                        help=(
+                            "Number of elliptic Fourier harmonics per seed, written to "
+                            "efd_coefficients.tsv; 0 disables (default: 20)"
+                        ))
+    parser.add_argument("--mark-base", action=argparse.BooleanOptionalAction, default=True,
+                        help="Mark the end detected as each seed's base with a dot on the overlays (default: on)")
     parser.add_argument("--alpha", type=float, default=0.35,
                         help="Mask overlay opacity from 0 to 1 (default: 0.35)")
     parser.add_argument("--max-instances", type=int, default=400,
@@ -156,6 +163,8 @@ def validate_args(args):
         sys.exit("Error: --alpha must be between 0 and 1.")
     if args.max_instances < 1:
         sys.exit("Error: --max-instances must be at least 1.")
+    if args.efd_harmonics < 0:
+        sys.exit("Error: --efd-harmonics must be 0 (off) or a positive number.")
     if args.dpi is not None and args.dpi <= 0:
         sys.exit("Error: --dpi must be a positive number.")
 
@@ -203,6 +212,7 @@ def log_parameters(args, log):
                  "metrics: area, length (per image)")
     else:
         log.emit("Outlier filter:       off")
+    log.emit(f"EFD harmonics:        {args.efd_harmonics or 'off'}")
     log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)
