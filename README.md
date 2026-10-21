@@ -111,6 +111,15 @@ Key flags (run the script with `-h` for the full list):
 
 Every detection that passes `--min-score` and `--min-contour-points` is written to the table.
 
+### Seed numbering
+
+`object_id` numbers the seeds of each image from 1 in reading order: seeds are grouped into rows from top to bottom
+(a new row starts when a seed lies more than one median seed length below the first seed of the current row) and
+numbered left to right within a row. Outliers are numbered last, after all regular seeds. With `--replicates` the
+numbering runs continuously through all plants of the image. The overlay labels show the same `object_id`, so a seed
+on the image can be found in the table directly. The original Mask R-CNN index (ordered by detection score) is kept
+in `model_index`.
+
 ### Outlier filtering
 
 False detections (mostly dark shadow triangles in the image corners) are usually much larger than real seeds. Each

@@ -13,6 +13,7 @@ from .columns import (
     SEED_PARAMETERS_FILENAME,
 )
 from .measure import measure_instances
+from .numbering import renumber_seeds
 from .outliers import DEFAULT_K, flag_outliers, mark_no_outliers
 from .preprocess import geometric_preprocess, photometric_preprocess
 from .replicates import assign_replicates, parse_sample_and_replicates
@@ -25,7 +26,7 @@ from .visualize import draw_predictions
 def label_replicates(metrics, filename, log):
     """Add sample_id/replicate_id columns to metrics in place.
 
-    Returns (replicate_by_object_id, status text, parsed_ok). On a parsing or
+    Returns (status text, parsed_ok). On a parsing or
     clustering failure, both columns are left blank and a warning is logged.
     """
     try:
@@ -36,10 +37,9 @@ def label_replicates(metrics, filename, log):
         log.emit(f"Warning: {filename}: {error}. Leaving sample_id/replicate_id blank.")
         metrics["sample_id"] = pd.NA
         metrics["replicate_id"] = pd.NA
-        return {}, "replicate parsing FAILED", False
+        return "replicate parsing FAILED", False
 
-    replicate_by_object_id = dict(zip(metrics["object_id"], metrics["replicate_id"]))
-    return replicate_by_object_id, f"sample {sample_id!r}, {len(replicate_ids)} replicate(s)", True
+    return f"sample {sample_id!r}, {len(replicate_ids)} replicate(s)", True
 
 
 def write_summaries(final_df, args, log):
@@ -119,18 +119,21 @@ def process_images(args, model, log):
             flag_outliers(metrics, args.outlier_method, outlier_k, args.outlier_tail)
         else:
             mark_no_outliers(metrics)
-        outlier_ids = set(metrics.loc[metrics["is_outlier"], "object_id"])
-        total_outliers += len(outlier_ids)
 
         replicate_by_object_id = {} if args.replicates else None
         replicate_text = "sample/replicate: n/a"
+        if not metrics.empty and args.replicates:
+            replicate_text, parsed_ok = label_replicates(metrics, filename, log)
+            if not parsed_ok:
+                parsing_failures.append(filename)
+
+        # Number seeds in reading order (outliers last); overlay labels use the new IDs.
+        renumber_seeds(metrics, instances)
+        outlier_ids = set(metrics.loc[metrics["is_outlier"], "object_id"])
+        total_outliers += len(outlier_ids)
         if not metrics.empty:
             if args.replicates:
-                replicate_by_object_id, replicate_text, parsed_ok = label_replicates(
-                    metrics, filename, log
-                )
-                if not parsed_ok:
-                    parsing_failures.append(filename)
+                replicate_by_object_id = dict(zip(metrics["object_id"], metrics["replicate_id"]))
             tables.append(metrics)
 
         if args.save_images:
@@ -178,14 +181,8 @@ def process_images(args, model, log):
     os.makedirs(args.output_dir, exist_ok=True)
 
     final_df = pd.concat(tables, ignore_index=True)
-    if args.replicates:
-        final_df = final_df.sort_values(
-            by=["file_name", "replicate_id", "object_id"], kind="stable", na_position="last",
-        ).reset_index(drop=True)[REPLICATE_SEED_COLUMNS]
-    else:
-        final_df = final_df.sort_values(
-            by=["file_name", "object_id"], kind="stable"
-        ).reset_index(drop=True)[SEED_COLUMNS]
+    final_df = final_df.sort_values(by=["file_name", "object_id"], kind="stable").reset_index(drop=True)
+    final_df = final_df[REPLICATE_SEED_COLUMNS if args.replicates else SEED_COLUMNS]
 
     if args.dpi is not None:
         final_df = convert_to_millimetres(final_df, args.dpi)

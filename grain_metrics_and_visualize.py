@@ -5,7 +5,12 @@ mask overlays -- all under one output folder.
 One Mask R-CNN inference pass per image. Every predicted object that passes
 --min-score and --min-contour-points is written to the per-seed table and
 drawn in the overlay (unless --no-save-images). The overlay label is the
-exact zero-based object_id in the table.
+exact object_id in the table.
+
+Seeds are numbered from 1 in reading order -- in rows from top to bottom,
+left to right within a row -- with outliers numbered last. The numbering is
+continuous across all replicates of an image; the original Mask R-CNN index
+is kept in model_index.
 
 Outliers
 --------
