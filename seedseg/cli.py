@@ -15,6 +15,7 @@ from .config import ConfigError, load_config, save_config
 from .outliers import DEFAULT_K, OUTLIER_METHODS, OUTLIER_TAILS
 from .preprocess import FLIP_MODES
 from .runlog import RunLog
+from .samplesheet import GRAIN_HULL_COLUMN, SampleSheetError, load_sample_sheet
 
 
 def build_parser(description):
@@ -97,6 +98,21 @@ def build_parser(description):
                             "Number of elliptic Fourier harmonics per seed, written to "
                             "efd_coefficients.tsv; 0 disables (default: 20)"
                         ))
+    parser.add_argument("--sample-sheet", default=None,
+                        help=(
+                            "Tab/comma-separated file giving each sample's grain type in a "
+                            f"'{GRAIN_HULL_COLUMN}' column (1 = hulled, 0 = naked). Decides which "
+                            "end of a seed is its base: the narrow end for hulled, the blunt end "
+                            "for naked barley. Samples not in the sheet, or all samples without "
+                            "a sheet, use the blunt end (default: none)"
+                        ))
+    parser.add_argument("--sample-id-column", default="sample_id",
+                        help=(
+                            "Sample-sheet column matched against the sample_id parsed from each "
+                            "file name, its last '_'-separated part (the sample number, e.g. "
+                            "SV002 in SV3_19-20_SV002_1-5-6.tif), or the bare file name "
+                            "(default: sample_id)"
+                        ))
     parser.add_argument("--mark-base", action=argparse.BooleanOptionalAction, default=True,
                         help="Mark the end detected as each seed's base with a dot on the overlays (default: on)")
     parser.add_argument("--alpha", type=float, default=0.35,
@@ -135,6 +151,8 @@ def validate_args(args):
         sys.exit(f"Error: input directory does not exist: {args.input}")
     if not os.path.isfile(args.weights):
         sys.exit(f"Error: weights file does not exist: {args.weights}")
+    if args.sample_sheet is not None and not os.path.isfile(args.sample_sheet):
+        sys.exit(f"Error: sample sheet does not exist: {args.sample_sheet}")
     for flag, value in (("--crop-left", args.crop_left), ("--crop-right", args.crop_right),
                         ("--crop-top", args.crop_top), ("--crop-bottom", args.crop_bottom)):
         if not 0.0 <= value < 1.0:
@@ -213,6 +231,9 @@ def log_parameters(args, log):
     else:
         log.emit("Outlier filter:       off")
     log.emit(f"EFD harmonics:        {args.efd_harmonics or 'off'}")
+    sheet_text = (f"{args.sample_sheet} (ID column: {args.sample_id_column})"
+                  if args.sample_sheet else "none (base = blunt end for all seeds)")
+    log.emit(f"Sample sheet:         {sheet_text}")
     log.emit(f"DPI (unit conversion):{'pixels (none)' if args.dpi is None else args.dpi}")
     log.emit(f"Save overlays:        {args.save_images}")
     log.emit("=" * 78)
@@ -221,10 +242,21 @@ def log_parameters(args, log):
 def main(description=None):
     args = parse_args(description)
     validate_args(args)
+    # Read before the overwrite prompt and TensorFlow, so a broken sheet fails fast.
+    grain_types = None
+    if args.sample_sheet is not None:
+        try:
+            grain_types = load_sample_sheet(args.sample_sheet, args.sample_id_column)
+        except SampleSheetError as error:
+            sys.exit(f"Error: {error}")
     confirm_overwrite(args)
 
     log = RunLog()
     log_parameters(args, log)
+    if grain_types is not None:
+        counts = {grain: list(grain_types.values()).count(grain) for grain in ("hulled", "naked")}
+        log.emit(f"Sample sheet: {len(grain_types)} sample(s), "
+                 f"{counts['hulled']} hulled, {counts['naked']} naked")
     os.makedirs(args.output_dir, exist_ok=True)
     config_path = os.path.join(args.output_dir, CONFIG_USED_FILENAME)
     save_config(args, config_path)
@@ -237,7 +269,7 @@ def main(description=None):
 
         log.emit(f"Loading weights from {args.weights}")
         model = load_model(args.weights, args.max_instances, args.mask_threshold)
-        process_images(args, model, log)
+        process_images(args, model, log, grain_types)
     finally:
         # Written even when the run fails, so failed runs leave a record too.
         os.makedirs(args.output_dir, exist_ok=True)

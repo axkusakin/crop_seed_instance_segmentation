@@ -57,6 +57,14 @@ postprocessing:
 
 measurements:
   efd_harmonics: 20        # elliptic Fourier harmonics per seed -> efd_coefficients.tsv; 0 = off
+  # Tab/comma-separated file with each sample's grain type in a grain_hull
+  # column (1 = hulled, 0 = naked). The base of a seed is its narrow end in
+  # hulled and its blunt end in naked barley; samples not in the sheet (or
+  # all samples, when null) use the blunt end.
+  sample_sheet: null
+  # Sheet column matched against the sample_id from the file name or its last
+  # '_'-separated part (SV002 in SV3_19-20_SV002_1-5-6.tif).
+  sample_id_column: sample_id
 
 output:
   dpi: null                # scan resolution; set (e.g. 500) to report millimetres

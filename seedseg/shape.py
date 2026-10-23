@@ -7,10 +7,12 @@ local canvas the size of its bounding box.
 Orientation. The seed is rotated onto its principal (long) axis u, with the
 perpendicular offset v measured from the chord joining the seed's two ends
 (not from the centroid, which shifts towards a bulging side). The width profile w(u) is measured in PROFILE_BINS
-slices along the length. The blunter end -- the one with the larger mean
-width over the outer END_FRACTION of the length -- is taken as the base, and
-u runs from base (0) to tip (1). base_tip_width_ratio (>= 1) says how
-distinct the two ends are: near 1, the orientation is unreliable.
+slices along the length. The two ends are compared by their mean width over
+the outer END_FRACTION of the length; base_end says which one is the base:
+'blunt' (the wider end; naked barley) or 'narrow' (hulled barley, see
+seedseg/samplesheet.py). u runs from base (0) to tip (1). end_width_ratio
+(>= 1) says how distinct the two ends are: below ORIENTATION_UNCERTAIN_RATIO
+the seed is flagged orientation_uncertain and the signed metrics are unreliable.
 
 Metrics (all dimensionless):
   lateral_area_asymmetry       |A(v>0) - A(v<0)| / A, across the long axis; 0 = symmetric
@@ -21,7 +23,7 @@ Metrics (all dimensionless):
   max_width_position           position of the maximum width, 0 = base, 1 = tip
   max_width_position_from_nearest_end
                                min(p, 1 - p): orientation-free version, 0..0.5
-  base_tip_width_ratio         mean width near the base / near the tip, >= 1
+  end_width_ratio              mean width near the wider end / near the narrower end, >= 1
 """
 
 import cv2
@@ -33,7 +35,9 @@ END_FRACTION = 0.15
 # Pixels within this distance (px) of each extreme along the long axis locate its end points.
 # Averaging over a wider window biases the chord towards a bulging side.
 ENDPOINT_TOLERANCE = 0.5
-
+# Below this end_width_ratio the two ends look alike and the base cannot be told from the tip.
+ORIENTATION_UNCERTAIN_RATIO = 1.15
+BASE_ENDS = ("blunt", "narrow")
 
 
 def fill_contour(contour):
@@ -44,8 +48,13 @@ def fill_contour(contour):
     return canvas, (x0, y0)
 
 
-def shape_profile(contour):
-    """Return (metrics dict, base point (x, y) in image coordinates)."""
+def shape_profile(contour, base_end="blunt"):
+    """Return (metrics dict, base point (x, y) in image coordinates).
+
+    base_end is 'blunt' or 'narrow': which end of the seed is taken as its base.
+    """
+    if base_end not in BASE_ENDS:
+        raise ValueError(f"base_end must be one of {BASE_ENDS}, got {base_end!r}")
     canvas, (x0, y0) = fill_contour(contour)
     ys, xs = np.nonzero(canvas)
     points = np.column_stack([xs + x0, ys + y0]).astype(float)
@@ -75,10 +84,10 @@ def shape_profile(contour):
     filled = ~np.isnan(top)
     width = np.where(filled, top - bottom + 1.0, 0.0)
 
-    # Orient base -> tip: the blunter (wider) end is the base.
+    # Orient base -> tip: the base is the wider end for base_end='blunt', the narrower one otherwise.
     end_bins = max(1, int(round(END_FRACTION * PROFILE_BINS)))
     start_width, end_width = width[:end_bins].mean(), width[-end_bins:].mean()
-    base_at_end = end_width > start_width
+    base_at_end = end_width > start_width if base_end == "blunt" else end_width < start_width
     if base_at_end:
         width = width[::-1]
         top, bottom, filled = top[::-1], bottom[::-1], filled[::-1]
@@ -89,7 +98,7 @@ def shape_profile(contour):
     base_point = centre + major * base_u
 
     blunt, sharp = max(start_width, end_width), min(start_width, end_width)
-    base_tip_width_ratio = blunt / sharp if sharp > 0 else np.nan
+    end_width_ratio = blunt / sharp if sharp > 0 else np.nan
 
     area = float(len(u))
     lateral_area_asymmetry = abs(np.count_nonzero(v > 0) - np.count_nonzero(v < 0)) / area
@@ -112,8 +121,11 @@ def shape_profile(contour):
         if sd_position > 0 else np.nan
     )
 
+    # Pixel widths often tie along a flat top; take the middle of the tied bins, so the
+    # position doesn't depend on which end the profile is read from.
     smoothed = np.convolve(width, np.ones(3) / 3, mode="same")
-    max_width_position = float(positions[np.argmax(smoothed)])
+    widest = np.flatnonzero(smoothed >= smoothed.max() - 1e-9)
+    max_width_position = float((positions[widest[0]] + positions[widest[-1]]) / 2)
 
     metrics = {
         "lateral_area_asymmetry": lateral_area_asymmetry,
@@ -122,7 +134,8 @@ def shape_profile(contour):
         "width_profile_skewness": width_profile_skewness,
         "max_width_position": max_width_position,
         "max_width_position_from_nearest_end": min(max_width_position, 1 - max_width_position),
-        "base_tip_width_ratio": base_tip_width_ratio,
+        "end_width_ratio": end_width_ratio,
+        "orientation_uncertain": bool(not end_width_ratio >= ORIENTATION_UNCERTAIN_RATIO),
     }
     return metrics, (float(base_point[0]), float(base_point[1]))
 

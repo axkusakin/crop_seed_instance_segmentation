@@ -32,6 +32,8 @@ CONFIG_KEYS = {
     ("postprocessing", "outliers", "k"): "outlier_k",
     ("postprocessing", "outliers", "tail"): "outlier_tail",
     ("measurements", "efd_harmonics"): "efd_harmonics",
+    ("measurements", "sample_sheet"): "sample_sheet",
+    ("measurements", "sample_id_column"): "sample_id_column",
     ("output", "dpi"): "dpi",
     ("output", "save_images"): "save_images",
     ("output", "alpha"): "alpha",
@@ -41,6 +43,7 @@ CONFIG_KEYS = {
 # Expected Python types per dest; ints are accepted where floats are expected.
 DEST_TYPES = {
     "input": str, "output_dir": str, "weights": str, "flip": str,
+    "sample_sheet": str, "sample_id_column": str,
     "outlier_method": str, "outlier_tail": str, "outlier_k": float,
     "filter_outliers": bool, "mark_base": bool, "efd_harmonics": int, "replicates": bool, "save_images": bool, "contrast": bool, "blur": bool,
     "crop_left": float, "crop_right": float, "crop_top": float, "crop_bottom": float,
@@ -49,7 +52,7 @@ DEST_TYPES = {
     "min_contour_points": int, "max_instances": int, "clahe_tile_size": int, "blur_kernel": int,
 }
 
-NULLABLE_DESTS = {"dpi", "outlier_k"}
+NULLABLE_DESTS = {"dpi", "outlier_k", "sample_sheet"}
 
 
 class ConfigError(ValueError):

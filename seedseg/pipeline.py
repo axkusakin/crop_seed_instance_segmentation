@@ -18,6 +18,7 @@ from .outliers import DEFAULT_K, flag_outliers, mark_no_outliers
 from .preprocess import geometric_preprocess, photometric_preprocess
 from .replicates import assign_replicates, parse_sample_and_replicates
 from .runlog import format_duration
+from .samplesheet import base_end_for, grain_type_for
 from .summary import summarise
 from .units import convert_to_millimetres, summary_metric_columns_for
 from .visualize import draw_predictions
@@ -54,7 +55,7 @@ def write_summaries(final_df, args, log):
     metric_columns = summary_metric_columns_for(args.dpi)
 
     if not args.replicates:
-        samples_summary = summarise(final_df, ["file_name"], metric_columns)
+        samples_summary = summarise(final_df, ["file_name", "grain_type"], metric_columns)
         samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
         samples_summary.to_csv(samples_path, sep="\t", index=False)
         log.emit(f"Sample summary saved to {samples_path}")
@@ -65,13 +66,15 @@ def write_summaries(final_df, args, log):
         log.emit("Warning: no rows had a valid sample_id/replicate_id; summary tables were not created.")
         return False
 
-    replicates_summary = summarise(labelled_df, ["sample_id", "replicate_id"], metric_columns)
+    replicates_summary = summarise(
+        labelled_df, ["sample_id", "grain_type", "replicate_id"], metric_columns
+    )
     replicates_path = os.path.join(args.output_dir, REPLICATES_SUMMARY_FILENAME)
     replicates_summary.to_csv(replicates_path, sep="\t", index=False)
     log.emit(f"Replicate summary saved to {replicates_path}")
 
     samples_summary = summarise(
-        labelled_df, ["sample_id"], metric_columns, include_replicate_count=True
+        labelled_df, ["sample_id", "grain_type"], metric_columns, include_replicate_count=True
     )
     samples_path = os.path.join(args.output_dir, SAMPLES_SUMMARY_FILENAME)
     samples_summary.to_csv(samples_path, sep="\t", index=False)
@@ -79,7 +82,12 @@ def write_summaries(final_df, args, log):
     return True
 
 
-def process_images(args, model, log):
+def process_images(args, model, log, grain_types=None):
+    """Run detection and measurement on every image in args.input.
+
+    grain_types maps sample_id to 'hulled' / 'naked' (from the sample sheet);
+    it decides which end of each seed is its base.
+    """
     predicted_dir = os.path.join(args.output_dir, PREDICTED_MASKS_DIRNAME)
     if args.save_images:
         os.makedirs(predicted_dir, exist_ok=True)
@@ -100,6 +108,7 @@ def process_images(args, model, log):
     efd_tables = []
     skipped_files = []
     parsing_failures = []
+    unknown_grain_type = []
     total_seeds_detected = 0
     total_outliers = 0
     run_start = time.perf_counter()
@@ -118,10 +127,20 @@ def process_images(args, model, log):
         model_input_bgr = photometric_preprocess(image_bgr, args)
         image_rgb = cv2.cvtColor(model_input_bgr, cv2.COLOR_BGR2RGB)
         result = model.detect([image_rgb], verbose=0)[0]
+
+        grain_type = grain_type_for(filename, grain_types) if grain_types else None
+        base_end = base_end_for(grain_type)
+        if grain_types and grain_type is None:
+            unknown_grain_type.append(filename)
+            log.emit(f"Warning: {filename}: sample not found in the sample sheet; "
+                     f"taking the {base_end} end as the base.")
+
         metrics, instances, raw_instance_count, efd = measure_instances(
             result, filename, image_bgr, args.min_score, args.min_contour_points,
-            args.efd_harmonics,
+            args.efd_harmonics, base_end,
         )
+        metrics["grain_type"] = grain_type if grain_type is not None else pd.NA
+        metrics["base_end"] = base_end
 
         # Outliers are flagged first so that replicate clustering can ignore them.
         if args.filter_outliers:
@@ -182,6 +201,7 @@ def process_images(args, model, log):
             parts.append(f"outliers {len(outlier_ids)}")
         if args.replicates:
             parts.append(replicate_text)
+        parts.append(f"{grain_type or 'grain type unknown'}, base = {base_end} end")
         parts += [score_text, f"{elapsed:.2f}s", f"ETA {eta_text}"]
         log.emit(" | ".join(parts))
 
@@ -236,6 +256,9 @@ def process_images(args, model, log):
         )
         log.emit(f"  Replicate parse fails: {len(parsing_failures)}"
                  + (f" ({', '.join(parsing_failures)})" if parsing_failures else ""))
+    if grain_types:
+        log.emit(f"  Not in sample sheet:   {len(unknown_grain_type)}"
+                 + (f" ({', '.join(unknown_grain_type)})" if unknown_grain_type else ""))
     log.emit(f"  Total seeds kept:      {total_seeds_detected}")
     if args.filter_outliers:
         log.emit(f"  Outliers flagged:      {total_outliers} (excluded from summaries)")
