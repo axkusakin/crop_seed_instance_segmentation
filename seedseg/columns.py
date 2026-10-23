@@ -20,8 +20,12 @@ RATIO_COLUMNS = [
 SHAPE_PROFILE_COLUMNS = [
     "lateral_area_asymmetry", "lateral_mirror_iou", "longitudinal_area_asymmetry",
     "width_profile_skewness", "max_width_position", "max_width_position_from_nearest_end",
-    "base_tip_width_ratio",
+    "end_width_ratio",
 ]
+
+# Seed orientation: grain_type and base_end per image (from the sample sheet), the flag per seed.
+ORIENTATION_COLUMNS = ["grain_type", "base_end"]
+ORIENTATION_FLAG_COLUMN = "orientation_uncertain"
 
 # CIELAB colour of the seed's pixels: L* 0-100, a* green(-)/red(+), b* blue(-)/yellow(+).
 COLOUR_COLUMNS = [
@@ -33,7 +37,7 @@ MEASURED_COLUMNS = [
     "file_name", "object_id", "detection_score", "AS_seed_area",
     "L_seed_length", "W_seed_width", "LWR_length_to_width_ratio",
     "eccentricity", "solidity", "PL_perimeter_length", "CS_seed_circularity",
-    *POSITION_COLUMNS, *SHAPE_PROFILE_COLUMNS, *COLOUR_COLUMNS,
+    *POSITION_COLUMNS, *SHAPE_PROFILE_COLUMNS, ORIENTATION_FLAG_COLUMN, *COLOUR_COLUMNS,
 ]
 
 # Per-seed metrics in output order: size, shape ratios, profile/asymmetry, colour.
@@ -48,12 +52,13 @@ SUMMARY_STATISTICS = ["mean", "sd", "median", "min", "max"]
 
 # Final per-seed column order (pixel-named; renamed by convert_to_millimetres if --dpi is set).
 SEED_COLUMNS = (
-    ["file_name", "object_id", "model_index", "detection_score"]
-    + METRIC_ORDER + ["is_outlier", "outlier_reason"]
+    ["file_name", *ORIENTATION_COLUMNS, "object_id", "model_index", "detection_score"]
+    + METRIC_ORDER + [ORIENTATION_FLAG_COLUMN, "is_outlier", "outlier_reason"]
 )
 REPLICATE_SEED_COLUMNS = (
-    ["file_name", "sample_id", "replicate_id", "object_id", "model_index", "detection_score"]
-    + METRIC_ORDER + POSITION_COLUMNS + ["is_outlier", "outlier_reason"]
+    ["file_name", "sample_id", "replicate_id", *ORIENTATION_COLUMNS, "object_id", "model_index",
+     "detection_score"]
+    + METRIC_ORDER + POSITION_COLUMNS + [ORIENTATION_FLAG_COLUMN, "is_outlier", "outlier_reason"]
 )
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}

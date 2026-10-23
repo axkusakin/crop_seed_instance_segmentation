@@ -108,6 +108,8 @@ Key flags (run the script with `-h` for the full list):
 | `--outlier-k` | `2.5` (iqr) / `4` (mad) | Width of the outlier bounds; larger = fewer outliers |
 | `--outlier-tail` | `both` | `both` or `upper` (flag only too-large seeds) |
 | `--efd-harmonics` | `20` | Elliptic Fourier harmonics per seed (`efd_coefficients.tsv`); `0` = off |
+| `--sample-sheet` | none | File with each sample's grain type (`grain_hull`: 1 = hulled, 0 = naked); sets which end is the base (see [Seed orientation](#seed-orientation)) |
+| `--sample-id-column` | `sample_id` | Sample-sheet column holding the sample IDs |
 | `--mark-base` / `--no-mark-base` | on | Dot at the end detected as each seed's base on the overlays |
 | `--alpha` | `0.35` | Overlay opacity |
 
@@ -143,6 +145,33 @@ Outliers are **flagged, not deleted**: they stay in `seed_parameters.tsv` with `
 overlays. They are excluded from the summary tables (which report the excluded count as `n_outliers`) and from
 replicate clustering, so a large artifact can't be mistaken for a separate plant; each outlier gets the
 `replicate_id` of its nearest non-outlier seed.
+
+### Seed orientation
+
+The signed profile metrics (below) run from the seed's base to its tip, and which end is the base depends on the
+grain type:
+
+* **hulled** barley — the **narrow** end: the attachment to the rachis pinches the outline, while the tip is widened;
+* **naked** barley — the **blunt** (wider) end.
+
+The grain type comes from a sample sheet, `--sample-sheet samples.tsv` — a tab-, comma- or semicolon-separated file
+with one row per sample:
+
+```
+sample_id	grain_hull
+SV002	1
+SV288	0
+```
+
+`grain_hull` is 1 for hulled and 0 for naked. Each image is matched, in turn, by the `sample_id` parsed from its file
+name (see [the file-name convention](#replicate-file-name-convention); this works without `--replicates` too), by the
+last `_`-separated part of that `sample_id` — the sample number — or by its bare file name. For
+`SV3_19-20_SV002_1-5-6.tif` (field `SV3`, season `19-20`, sample `SV002`, plants 1, 5, 6) the sheet may list either
+`SV3_19-20_SV002` or `SV002`. Images whose sample is not in the sheet — and all images when no sheet is given — use the blunt
+end, with a warning in `run_log.txt`. The ID column can be renamed with `--sample-id-column`.
+
+Whichever rule applies, a seed whose two ends have nearly the same width (`end_width_ratio` < 1.15) is flagged
+`orientation_uncertain`: its base and tip can't be told apart reliably.
 
 ### Preprocessing
 
@@ -202,13 +231,14 @@ Everything is written under the given `--output-dir`:
 
 Columns of `seed_parameters.tsv`, in this fixed order (the order is defined once, in `seedseg/columns.py`):
 
-* **Identifiers:** `file_name` (with `--replicates` also `sample_id`, `replicate_id`), `object_id`, `model_index`,
-  `detection_score`.
+* **Identifiers:** `file_name` (with `--replicates` also `sample_id`, `replicate_id`), `grain_type` (`hulled`,
+  `naked`, or blank when unknown), `base_end` (`narrow` or `blunt`), `object_id`, `model_index`, `detection_score`.
 * **Size:** seed area, length, width, perimeter length (pixels, or mm/mm² with `--dpi`).
 * **Shape ratios:** length-to-width ratio, eccentricity, solidity, circularity.
 * **Width profile and asymmetry** (dimensionless). The seed is aligned to its long axis and its width is measured in
-  50 slices along the length. The **base** is taken to be the blunter end — the one with the larger mean width over
-  the outer 15% of the length — so profile positions run from base (0) to tip (1):
+  50 slices along the length. The two ends are compared by their mean width over the outer 15% of the length, and
+  the base is the narrow or the blunt one depending on the grain type ([Seed orientation](#seed-orientation)), so
+  profile positions run from base (0) to tip (1):
   * `lateral_area_asymmetry` — area difference between the two sides of the line joining the seed's ends, as a share
     of the area (0 = symmetric);
   * `lateral_mirror_iou` — overlap of the seed with its mirror image across that line (1 = symmetric);
@@ -217,16 +247,18 @@ Columns of `seed_parameters.tsv`, in this fixed order (the order is defined once
   * `max_width_position` — where along the length the seed is widest (0 = base, 1 = tip);
   * `max_width_position_from_nearest_end` — the same as distance from the nearer end (0–0.5), independent of
     which end is the base;
-  * `base_tip_width_ratio` — mean width near the base / near the tip (≥ 1). Close to 1 the two ends look alike and
-    the base/tip orientation (and the signed metrics above) is unreliable.
+  * `end_width_ratio` — mean width near the wider end / near the narrower end (≥ 1), independent of which end is
+    the base. Close to 1 the two ends look alike and the base/tip orientation (and the signed metrics above) is
+    unreliable.
 * **Colour** in CIELAB, measured on the image without contrast/blur preprocessing: `colour_L_mean/_sd` (lightness,
   0–100), `colour_a_mean/_sd` (green − / red +), `colour_b_mean/_sd` (blue − / yellow +). The scans have no colour
   chart, so colour values are comparable only between scans made with the same scanner and settings.
 * With `--replicates`: centroid position (used for replicate assignment).
-* `is_outlier`, `outlier_reason`.
+* `orientation_uncertain`, `is_outlier`, `outlier_reason`.
 
-Summary tables report, for each metric in the same order, `_mean`, `_sd`, `_median`, `_min`, `_max` (per-seed colour
-SDs are not summarised).
+Summary tables are grouped by sample (and replicate) together with `grain_type`, count the seeds flagged
+`orientation_uncertain` as `n_orientation_uncertain`, and report, for each metric in the same order, `_mean`, `_sd`,
+`_median`, `_min`, `_max` (per-seed colour SDs are not summarised).
 
 `efd_coefficients.tsv` holds elliptic Fourier descriptors of each seed's outline (`pyefd`, normalised for size,
 rotation and starting point; the first harmonic's three constant coefficients are omitted), keyed by `file_name` and
