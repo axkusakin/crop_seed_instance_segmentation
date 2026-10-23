@@ -1,0 +1,61 @@
+# Example run configuration for grain_metrics_and_visualize.py.
+#
+#   python grain_metrics_and_visualize.py --config my_config.yaml
+#
+# Every key is optional except input and output_dir (which may also be given
+# as -i / -o). Flags given on the command line override values from this file,
+# e.g. `--config my_config.yaml --mask-threshold 0.3` or `--no-save-images`.
+# The resolved parameters of each run are saved to <output_dir>/config_used.yaml.
+# Relative paths are resolved against the directory you run the script from
+# (the repository root), not against the location of this file.
+
+input: images
+output_dir: output_dir
+
+# Split each image's seeds into plant replicates (plants laid out vertically,
+# file names <sample_id>_<r1-r2-...>.ext).
+replicates: false
+
+# Applied in this order: flip -> crop -> contrast -> blur. Flip and crop change
+# the image the overlays are drawn on; contrast and blur only change what the
+# model sees. Validate contrast/blur against reference masks before relying on
+# them: the model was trained on unprocessed scans.
+preprocessing:
+  flip: none               # none | horizontal | vertical (e.g. mirrored scanner output)
+  # Fraction of the image width (left/right) or height (top/bottom) to remove,
+  # measured on the flipped image.
+  crop:
+    left: 0.0
+    right: 0.0
+    top: 0.0
+    bottom: 0.0
+  contrast:                # CLAHE on the lightness channel; colours unchanged
+    enabled: false
+    clip_limit: 2.0        # higher = stronger contrast
+    tile_size: 8           # image split into tile_size x tile_size tiles
+  blur:                    # Gaussian smoothing
+    enabled: false
+    kernel_size: 3         # odd, in pixels
+
+model:
+  weights: data/barley/model_weights/mask_rcnn_barleyseeds_0040.h5
+  min_score: 0.95          # minimum detection confidence
+  min_contour_points: 100  # minimum contour point count
+  mask_threshold: 0.1      # soft-mask binarisation threshold (0.5 = original Mask R-CNN)
+  max_instances: 400       # maximum detections per image
+
+# A seed is flagged as an outlier if its area OR length falls outside the
+# bounds computed from the other seeds of the same image. Outliers stay in
+# seed_parameters.tsv (is_outlier, outlier_reason) and are drawn in red on the
+# overlays, but are excluded from the summaries and from replicate clustering.
+postprocessing:
+  outliers:
+    enabled: true
+    method: iqr            # iqr: Q1/Q3 -/+ k*IQR | mad: median -/+ k*1.4826*MAD
+    k: null                # null = method default (2.5 for iqr, 4 for mad); larger = fewer outliers
+    tail: both             # both | upper (flag only too-large seeds)
+
+output:
+  dpi: null                # scan resolution; set (e.g. 500) to report millimetres
+  save_images: true        # save prediction overlays
+  alpha: 0.35              # overlay opacity
