@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 OUTLIER_COLOUR = (0, 0, 255)  # BGR red
+BASE_MARKER_RADIUS = 5
 
 
 def instance_colour(object_id):
@@ -13,12 +14,14 @@ def instance_colour(object_id):
     return tuple(int(value) for value in cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0])
 
 
-def draw_predictions(image_bgr, instances, alpha, replicate_by_object_id=None, outlier_ids=()):
+def draw_predictions(image_bgr, instances, alpha, replicate_by_object_id=None, outlier_ids=(),
+                     mark_base=False):
     """Draw every retained object, labelled with its object_id.
 
     When replicate_by_object_id is given, labels also show each object's
     replicate_id ("?" for objects without one). Objects in outlier_ids are
-    drawn as an unfilled red contour with an "OUTLIER" label.
+    drawn as an unfilled red contour with an "OUTLIER" label. With mark_base,
+    a white dot with a black rim marks the end detected as the seed's base.
     """
     output = image_bgr.copy()
     overlay = output.copy()
@@ -35,6 +38,10 @@ def draw_predictions(image_bgr, instances, alpha, replicate_by_object_id=None, o
         is_outlier = object_id in outlier_ids
         colour = OUTLIER_COLOUR if is_outlier else instance_colour(object_id)
         cv2.drawContours(output, [contour], -1, colour, 2, cv2.LINE_AA)
+        if mark_base and not is_outlier:
+            base = tuple(int(round(value)) for value in instance["base_point"])
+            cv2.circle(output, base, BASE_MARKER_RADIUS + 2, (0, 0, 0), -1, cv2.LINE_AA)
+            cv2.circle(output, base, BASE_MARKER_RADIUS, (255, 255, 255), -1, cv2.LINE_AA)
 
         moments = cv2.moments(contour)
         if moments["m00"]:

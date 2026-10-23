@@ -9,10 +9,10 @@
 
 ## Planned features
 
-- [ ] **More morphological metrics**: symmetry/skew index, elliptic Fourier descriptors (EFD). `pyefd` is already a
-  pinned dependency, but EFD computation isn't wired into either script yet — `multivariate_analysis.ipynb` only
-  loads *precomputed* EFD coefficients from a CSV folder that doesn't exist in this repo. New descriptors should hook
-  into `seedseg/measure.py:measure_instances`, using the contour/hull/ellipse already computed there per instance.
+- [ ] **Central vs lateral grain classification**: asymmetry, width-profile, colour and EFD features are computed
+  (`seedseg/shape.py`); next, check them against seeds labelled as central/lateral, including whether the
+  blunter-end base detection matches the true base. `multivariate_analysis.ipynb` could be pointed at
+  `efd_coefficients.tsv` instead of its precomputed CSV folder.
 - [ ] **More preprocessing steps**: flip, CLAHE contrast and Gaussian blur are in `seedseg/preprocess.py`;
   grayscale conversion is still open. Contrast/blur settings still need validating against reference masks.
 - [ ] **Defective-grain detection**: either a post-hoc heuristic computed from the existing mask/contour/metrics, or

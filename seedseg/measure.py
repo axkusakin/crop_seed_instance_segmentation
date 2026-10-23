@@ -4,25 +4,31 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from .columns import MEASURED_COLUMNS
+from .columns import COLOUR_COLUMNS, MEASURED_COLUMNS, SHAPE_PROFILE_COLUMNS
+from .shape import colour_lab, efd_coefficients, efd_column_names, shape_profile
 
 
-def measure_instances(result, image_name, min_score, min_contour_points):
+def measure_instances(result, image_name, image_bgr, min_score, min_contour_points, efd_order=0):
     """Convert model output into one metric row and one overlay object per instance.
 
     All length/area/position values are computed in pixels; unit conversion
-    happens later, once, on the assembled table. Returns the metrics
-    DataFrame, the overlay instances, and the raw (pre-filter) instance
-    count reported by the model, for console diagnostics.
+    happens later, once, on the assembled table. Colour is measured on
+    image_bgr, which must not be contrast-enhanced. Returns the metrics
+    DataFrame, the overlay instances, the raw (pre-filter) instance count
+    reported by the model, and a DataFrame of EFD coefficients keyed by
+    object_id (empty when efd_order is 0).
     """
+    efd_columns = ["object_id"] + (efd_column_names(efd_order) if efd_order else [])
     masks = result.get("masks")
     scores = result.get("scores", [])
     raw_instance_count = 0 if masks is None or masks.ndim != 3 else masks.shape[-1]
     rows = []
     instances = []
+    efd_rows = []
 
     if masks is None or masks.ndim != 3 or masks.shape[-1] == 0:
-        return pd.DataFrame(columns=MEASURED_COLUMNS), instances, raw_instance_count
+        return (pd.DataFrame(columns=MEASURED_COLUMNS), instances, raw_instance_count,
+                pd.DataFrame(columns=efd_columns))
 
     for object_id in range(masks.shape[-1]):
         score = float(scores[object_id])
@@ -61,6 +67,11 @@ def measure_instances(result, image_name, min_score, min_contour_points):
         centroid_x = moments["m10"] / moments["m00"]
         centroid_y = moments["m01"] / moments["m00"]
 
+        profile, base_point = shape_profile(contour)
+        colour = colour_lab(image_bgr, contour)
+        if efd_order:
+            efd_rows.append([object_id, *efd_coefficients(contour, efd_order)])
+
         rows.append([
             image_name,
             object_id,
@@ -75,12 +86,16 @@ def measure_instances(result, image_name, min_score, min_contour_points):
             (4 * np.pi * area) / (perimeter ** 2),
             centroid_x,
             centroid_y,
+            *(profile[column] for column in SHAPE_PROFILE_COLUMNS),
+            *(colour[column] for column in COLOUR_COLUMNS),
         ])
         instances.append({
             "object_id": object_id,
             "score": score,
             "mask": mask,
             "contour": contour,
+            "base_point": base_point,
         })
 
-    return pd.DataFrame(rows, columns=MEASURED_COLUMNS), instances, raw_instance_count
+    return (pd.DataFrame(rows, columns=MEASURED_COLUMNS), instances, raw_instance_count,
+            pd.DataFrame(efd_rows, columns=efd_columns))
